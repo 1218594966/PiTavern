@@ -193,6 +193,28 @@ export async function importWorldToArchive(
     worldState.currentSceneId = firstScene.id;
     worldState.presentCharacterIds = (firstScene.data as { presentCharacterIds: string[] }).presentCharacterIds;
   }
+  // 空壳群像/纯角色包没有场景卡时：自动补一张默认场景（让角色有地方出场，
+  // 否则回合会因 currentSceneId 为空而无法开始）。M18 校园卡同此路径。
+  if (!firstScene && !worldState.currentSceneId) {
+    const charIds = cards.filter((c) => c.kind === 'character').map((c) => c.id);
+    const defaultSceneId = `scene_${worldId.replace('world_', '')}_default`;
+    const defaultScene: Card = {
+      id: defaultSceneId,
+      kind: 'scene',
+      data: {
+        name: `${worldName} · 初始场景`,
+        description: '一个普通的相遇之地。你就在这里开始了与他们的故事。',
+        presentCharacterIds: charIds,
+        itemIds: [],
+        recentChanges: [],
+      },
+    };
+    await store.putCard(defaultScene);
+    await store.addCardToWorld(worldId, defaultSceneId);
+    cards.push(defaultScene);
+    worldState.currentSceneId = defaultSceneId;
+    worldState.presentCharacterIds = charIds;
+  }
   // M12：世界级开场白（导入的空壳群像包 first_mes 归此）
   if (opts.worldGreeting?.text) worldState.greeting = { speaker: opts.worldGreeting.speaker, text: opts.worldGreeting.text };
   await store.putWorldState(worldId, worldState);

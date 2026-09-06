@@ -93,14 +93,21 @@ async function main() {
   const store: CardStore = opened.store;
   console.log(`[web] 存储: ${opened.kind}（${opened.detail}）`);
 
-  // ---- 种子：内置示例世界（demo_world）仅在全新存储播种（恢复的快照保留现场） ----
-  if (!opened.recovered) {
-    await seedDemoWorld(store);
-    console.log('[web] 已播种示例世界 demo_world');
+  // ---- 种子与默认世界 ----
+  // 全新存储：优先用用户的校园角色卡（Card/校园.png）作为默认世界；
+  // 仅当校园卡缺失/导入失败时才兜底播种内置示例世界 demo_world（老用户不受影响）。
+  let defaultWorldId = 'demo_world';
+  const campusId = await seedCampusWorldIfPresent(store);
+  if (campusId) {
+    defaultWorldId = campusId;
+    if (!opened.recovered) {
+      console.log(`[web] 默认世界: ${campusId}（校园角色卡）`);
+    }
   }
-
-  // ---- M18 默认世界 = 用户的校园角色卡：内置 Card/校园.png 为种子世界（幂等补种） ----
-  await seedCampusWorldIfPresent(store);
+  if (!opened.recovered && !campusId) {
+    await seedDemoWorld(store);
+    console.log('[web] 已播种示例世界 demo_world（未检测到 Card/校园.png，作为兜底示例）');
+  }
 
   // ---- 模型路由（可变引用：网页 provider_set 可热切换） ----
   // 单一共享集合：真实 provider 与 faux 混搭注册。每阶段独立解析：
@@ -123,26 +130,35 @@ async function main() {
   if (!banner.anyReal) {
     const faux = getFauxModels();
     // 多回合支持：响应队列里放 5 组（用完后 faux 返回错误消息，前端能看到容错）
+    // 角色 id 动态取自默认世界第一个非玩家角色（不硬编码 demo 世界的角色；
+    // 若默认世界是校园卡，faux 决策也会指向真实存在的校园角色）。
+    const defCards = defaultWorldId ? (await store.getCards(await store.listWorldCards(defaultWorldId))).filter((c): c is Card => c !== null) : [];
+    const defChar = defCards.find((c) => c.kind === 'character' && (c.data as { isPlayer?: boolean }).isPlayer !== true);
+    const defCharId = defChar?.id ?? null;
+    const defSceneId = defCards.find((c) => c.kind === 'scene')?.id ?? null;
+    const defMemId = defCards.find((c) => c.kind === 'memory' && !(c.data as { isSummary?: boolean }).isSummary)?.id ?? null;
+    const defItemId = defCards.find((c) => c.kind === 'item')?.id ?? null;
     const routerResp = [
-      { sceneCardId: null, characterCardIds: ['char_alicia'], speakerCharacterId: 'char_alicia', memoryCardIds: ['mem_andrew_fallout'], itemCardIds: [], historyWindow: 6, turn: 1 },
-      { sceneCardId: null, characterCardIds: ['char_alicia'], speakerCharacterId: 'char_alicia', memoryCardIds: [], itemCardIds: ['item_dagger'], historyWindow: 6, turn: 2 },
-      { sceneCardId: 'scene_smithy', characterCardIds: [], speakerCharacterId: null, memoryCardIds: [], itemCardIds: [], historyWindow: 6, turn: 3 },
-      { sceneCardId: null, characterCardIds: ['char_alicia'], speakerCharacterId: 'char_alicia', memoryCardIds: ['mem_andrew_fallout'], itemCardIds: [], historyWindow: 6, turn: 4 },
-      { sceneCardId: null, characterCardIds: ['char_alicia'], speakerCharacterId: 'char_alicia', memoryCardIds: [], itemCardIds: ['item_dagger'], historyWindow: 6, turn: 5 },
+      { sceneCardId: null, characterCardIds: defCharId ? [defCharId] : [], speakerCharacterId: defCharId, memoryCardIds: defMemId ? [defMemId] : [], itemCardIds: [], historyWindow: 6, turn: 1 },
+      { sceneCardId: null, characterCardIds: defCharId ? [defCharId] : [], speakerCharacterId: defCharId, memoryCardIds: [], itemCardIds: defItemId ? [defItemId] : [], historyWindow: 6, turn: 2 },
+      { sceneCardId: defSceneId, characterCardIds: [], speakerCharacterId: null, memoryCardIds: [], itemCardIds: [], historyWindow: 6, turn: 3 },
+      { sceneCardId: null, characterCardIds: defCharId ? [defCharId] : [], speakerCharacterId: defCharId, memoryCardIds: defMemId ? [defMemId] : [], itemCardIds: [], historyWindow: 6, turn: 4 },
+      { sceneCardId: null, characterCardIds: defCharId ? [defCharId] : [], speakerCharacterId: defCharId, memoryCardIds: [], itemCardIds: defItemId ? [defItemId] : [], historyWindow: 6, turn: 5 },
     ];
+    const defName = (defChar?.data as { name?: string })?.name ?? '角色';
     const actorResp = [
-      '艾莉西亚把围裙一角卷了卷，指节在柜台上轻轻一叩，目光在雨夜里压得很低。\n「安德鲁？哈。」她笑了一声，语气像在磨刀，「那笔货款够他在炉边烧三年了。你提他做什么——是来替他还债，还是来听我骂他？」',
-      '她瞥了一眼你手里的短剑，眼神暗了暗：「这东西……是从哪来的？我劝你放回桌上，别给自己找麻烦。」',
-      '风箱呼哧呼哧喘着气，铁匠铺里炉火正旺，人却不在。墙角挂着一件沾了铁屑的旧皮围裙，炉台上一块马蹄铁还烫着。\n（安德鲁不在，但炉火说明他刚走不久。）',
-      '艾莉西亚从柜台底下摸出两只杯子，给自己倒了一杯，给你推过来一杯：「雨这么大，先喝口热的。想打听安德鲁的事，就说说你跟他到底什么关系。」',
-      '她若有所思地看着你：「短剑的事，我不多问。灰烬镇的规矩——不该看的别盯着看。」',
+      `${defName}轻轻点了点头，目光落向你：「嗯，我在听。你刚才说的事——后来怎么样了？」`,
+      `${defName}想了想，语气放缓了一些：「这样啊……我大概明白了。你打算怎么办？」`,
+      `${defName}环顾四周，这里看起来刚有人离开不久，炉火还温着。\n（场景空荡，主人不知去向。）`,
+      `${defName}给你倒了杯热茶推过来：「先喝口热的，慢慢说。」`,
+      `${defName}若有所思地看了你一眼：「这事我知道了。放心，不会到处说。」`,
     ];
     const evalResp = [
-      { affectionChanges: [{ characterId: 'char_alicia', delta: -1 }], innerThoughts: [{ characterId: 'char_alicia', thought: '提到安德鲁让她想起旧账，戒备又重了一分，但也在试探这个外乡人知道多少。' }], roomChanges: [], itemTransfers: [], newMemoryCards: [] },
-      { affectionChanges: [{ characterId: 'char_alicia', delta: 1 }], innerThoughts: [{ characterId: 'char_alicia', thought: '他碰了那把短剑……看来不是善茬，但也可能只是好奇。' }], roomChanges: ['短剑仍留在桌上'], itemTransfers: [], newMemoryCards: [] },
-      { affectionChanges: [], innerThoughts: [], roomChanges: ['玩家离开了旅馆，前往铁匠铺'], itemTransfers: [], newMemoryCards: [] },
-      { affectionChanges: [{ characterId: 'char_alicia', delta: 2 }], innerThoughts: [{ characterId: 'char_alicia', thought: '他肯说实话，倒是个爽快人。' }], roomChanges: [], itemTransfers: [], newMemoryCards: [] },
-      { affectionChanges: [{ characterId: 'char_alicia', delta: 1 }], innerThoughts: [{ characterId: 'char_alicia', thought: '这人知道分寸，可以多聊两句。' }], roomChanges: [], itemTransfers: [], newMemoryCards: [] },
+      defCharId ? { affectionChanges: [{ characterId: defCharId, delta: -1 }], innerThoughts: [{ characterId: defCharId, thought: '他提到的旧事让我起了戒心，先试探两句。' }], roomChanges: [], itemTransfers: [], newMemoryCards: [] } : { affectionChanges: [], innerThoughts: [], roomChanges: [], itemTransfers: [], newMemoryCards: [] },
+      defCharId ? { affectionChanges: [{ characterId: defCharId, delta: 1 }], innerThoughts: [{ characterId: defCharId, thought: '这人看着不像坏人，可以多聊两句。' }], roomChanges: [], itemTransfers: [], newMemoryCards: [] } : { affectionChanges: [], innerThoughts: [], roomChanges: [], itemTransfers: [], newMemoryCards: [] },
+      { affectionChanges: [], innerThoughts: [], roomChanges: [], itemTransfers: [], newMemoryCards: [] },
+      defCharId ? { affectionChanges: [{ characterId: defCharId, delta: 2 }], innerThoughts: [{ characterId: defCharId, thought: '他肯说实话，倒是个爽快人。' }], roomChanges: [], itemTransfers: [], newMemoryCards: [] } : { affectionChanges: [], innerThoughts: [], roomChanges: [], itemTransfers: [], newMemoryCards: [] },
+      defCharId ? { affectionChanges: [{ characterId: defCharId, delta: 1 }], innerThoughts: [{ characterId: defCharId, thought: '这人知道分寸，可以多聊两句。' }], roomChanges: [], itemTransfers: [], newMemoryCards: [] } : { affectionChanges: [], innerThoughts: [], roomChanges: [], itemTransfers: [], newMemoryCards: [] },
     ];
     faux.setResponses({
       router: routerResp.map((r) => fauxAssistantMessage([fauxText(JSON.stringify(r))])),
@@ -343,6 +359,10 @@ async function main() {
    */
   async function listPlayableWorlds() {
     const worlds = await store.listWorlds();
+    // M18 之后：内置示例 demo_world 不再是默认。若用户校园世界已存在（world_校园），
+    // 从候选列表隐藏 demo_world——「演示旅馆」只在没有任何导入/校园世界时作为兜底出现。
+    const hasCampus = worlds.includes('world_校园');
+    const visible = worlds.filter((w) => !(hasCampus && w === 'demo_world'));
     const out: Array<{
       worldId: string;
       name: string;
@@ -353,7 +373,7 @@ async function main() {
       kind: 'demo' | 'import';
       greeting?: { speaker: string; text: string };
     }> = [];
-    for (const w of worlds) {
+    for (const w of visible) {
       const cards = (await store.getCards(await store.listWorldCards(w))).filter((c): c is Card => c !== null);
       const chars: string[] = [];
       const scenes: string[] = [];
@@ -461,7 +481,7 @@ async function main() {
   }
 
   wss.on('connection', (ws) => {
-    const session: ClientSession = { ws, busy: false, worldId: 'demo_world', chatId: null };
+    const session: ClientSession = { ws, busy: false, worldId: defaultWorldId, chatId: null };
     clients.add(session);
     const m = modeSummary();
     send(ws, { type: 'hello', models: {
@@ -870,12 +890,12 @@ async function main() {
         let wid = String(msg.worldId ?? '');
         const worlds = await store.listWorlds();
         if (wid === 'auto') {
-          // 默认世界 = 校园卡；没有则示例
+          // 默认世界 = 校园卡（M18）；没有校园卡则示例
           const campus = worlds.includes('world_校园') ? 'world_校园' : null;
           wid = campus ?? 'demo_world';
         }
-        if (wid !== 'demo_world' && !worlds.includes(wid)) wid = 'demo_world'; // 非法 id 回退示例
-        if (wid === 'demo_world' || worlds.includes(wid)) {
+        if (wid !== 'demo_world' && !worlds.includes(wid)) wid = defaultWorldId; // 非法 id 回退默认世界
+        if (worlds.includes(wid) || wid === 'demo_world') {
           const chatId = await switchWorld(session, wid);
           const chat = chatId ? await store.getChat(chatId) : null;
           const history = chatId ? await store.allChatMessages(chatId) : [];

@@ -1080,10 +1080,19 @@ function renderPromptDebug() {
       const req = d.request;
       // —— Request：分层展示 system / messages / tools（content 自动按【段标题】拆分小节）——
       const secKeyBase = stage + '-' + (d.preview ? 'pv' : 'real') + '-' + (Date.now() % 100000);
+      // 「工具」内容归并：System 里的【工具】用法说明 + 请求级 tools（函数/Schema 声明）
+      // 都属于同一主题，折叠段合并为一段（不再出现两个工具块）。
+      let toolsBodyMerged = false;
+      const mergeToolsInto = (title) => title === '工具' || title === 'Tools' || title === '🔧 Tools 工具' || title === '工具声明';
       if (req.system) {
         const parts = splitCtxSections(req.system, '🎛 System 系统指令');
         parts.forEach((p, pi) => {
-          body.appendChild(dbgSec(secKeyBase + '-sys' + pi, p.title, p.body.length + ' 字符', `<pre>${esc(p.body)}</pre>`));
+          let bodyHtml = `<pre>${esc(p.body)}</pre>`;
+          if (!toolsBodyMerged && req.tools && mergeToolsInto(p.title)) {
+            bodyHtml = `<pre>${esc(p.body)}</pre><div style="font-size:10px;color:var(--dim);padding:6px 10px 0;border-top:1px dashed var(--line);margin-top:6px;">⬇ 请求级函数声明（Tools Schema，随请求发给模型）</div><pre style="border-top:none;">${esc(typeof req.tools === 'string' ? req.tools : JSON.stringify(req.tools, null, 2))}</pre>`;
+            toolsBodyMerged = true;
+          }
+          body.appendChild(dbgSec(secKeyBase + '-sys' + pi, p.title, p.body.length + ' 字符', bodyHtml));
         });
       }
       (req.messages || []).forEach((m, i) => {
@@ -1094,11 +1103,18 @@ function renderPromptDebug() {
           : m.role;
         const parts = splitCtxSections(m.content, fb);
         parts.forEach((p, pi) => {
-          body.appendChild(dbgSec(secKeyBase + '-msg' + i + '-' + pi, p.title, p.body.length + ' 字符', `<pre>${esc(p.body)}</pre>`));
+          // 消息正文里的【工具】类段同样归并（同一主题不重复）
+          let bodyHtml = `<pre>${esc(p.body)}</pre>`;
+          if (!toolsBodyMerged && req.tools && mergeToolsInto(p.title)) {
+            bodyHtml = `<pre>${esc(p.body)}</pre><div style="font-size:10px;color:var(--dim);padding:6px 10px 0;border-top:1px dashed var(--line);margin-top:6px;">⬇ 请求级函数声明（Tools Schema，随请求发给模型）</div><pre style="border-top:none;">${esc(typeof req.tools === 'string' ? req.tools : JSON.stringify(req.tools, null, 2))}</pre>`;
+            toolsBodyMerged = true;
+          }
+          body.appendChild(dbgSec(secKeyBase + '-msg' + i + '-' + pi, p.title, p.body.length + ' 字符', bodyHtml));
         });
       });
-      if (req.tools) {
-        body.appendChild(dbgSec(secKeyBase + '-tools', '🔧 Tools 工具', '', `<pre>${esc(req.tools)}</pre>`));
+      // 独立 Tools 段：仅在 System/消息里没有「工具」段时兜底出现
+      if (req.tools && !toolsBodyMerged) {
+        body.appendChild(dbgSec(secKeyBase + '-tools', '🔧 Tools 工具', '', `<pre>${esc(typeof req.tools === 'string' ? req.tools : JSON.stringify(req.tools, null, 2))}</pre>`));
       }
       // —— Response：模型完整回复 ——
       const hasRes = d.response != null && d.response !== '';
