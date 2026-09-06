@@ -74,6 +74,10 @@ export interface CharacterCardData {
   /** M10-P1B：玩家角色卡（"我"的人设）—— 不进路由抽卡池、不登场当 NPC；
    *  若有，组装时以「玩家身份」段注入设定。 */
   isPlayer?: boolean;
+  /** skill 式上下文注入级别：'full'（默认）= 完整设定卡全量注入；
+   *  'summary' = 只给摘要卡（标题+描述开头），完整设定点名后由组装器展开。
+   *  用于控制每回合上下文 token 占用（尤其在场角色多时）。 */
+  contextMode?: 'full' | 'summary';
   description: string;
   personality: string;
   /** 背景设定（V2 scenario；M4 起分字段承载） */

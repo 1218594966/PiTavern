@@ -627,6 +627,14 @@
           <option value="actor" selected>③ 演员</option>
           <option value="evaluator">④ 结算</option>
         </select>
+        <select id="cfg-reasoning" title="思考强度（OpenAI 兼容 reasoning_effort；对戏建议 off/低）" style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font-size:12px;">
+          <option value="">思考（默认关）</option>
+          <option value="off">思考：关闭</option>
+          <option value="low">思考：低</option>
+          <option value="medium">思考：中</option>
+          <option value="high">思考：高</option>
+          <option value="xhigh">思考：xhigh</option>
+        </select>
         <button id="cfg-load" style="background:var(--panel2);color:var(--gold);border:1px solid var(--line);border-radius:4px;padding:3px 10px;font-size:12px;cursor:pointer;">拉取模型</button>
         <button id="cfg-test" style="background:var(--panel2);color:var(--green);border:1px solid var(--line);border-radius:4px;padding:3px 10px;font-size:12px;cursor:pointer;">测连通</button>
         <button id="cfg-apply" style="background:var(--gold);color:#14120c;border:none;border-radius:4px;padding:3px 10px;font-size:12px;font-weight:600;cursor:pointer;">应用到阶段</button>
@@ -1038,6 +1046,28 @@ function dbgSec(key, title, tk, bodyHtml) {
   return sec;
 }
 
+/** 折叠段 → 可视化分区（卡片流：导演指令 / 世界库 / 剧情上下文 / 其他） */
+function zoneFor(title) {
+  const t = String(title || '');
+  // 导演指令（System 内）
+  if (/^(规则|工具|Tools|输出|输出要求|导演)/.test(t)) return 'director';
+  // 世界库：常驻/档案/在场角色/场景/世界观/主线/法则
+  if (/世界库|常驻|档案|在场|世界观|主线|剧情发展|剧情结构|阶段|说明|场景|角色.*全卡/.test(t)) return 'world';
+  // 剧情上下文：层回顾/近N层/对话全文/摘要
+  if (/层回顾|层剧情|近 ?N ?层|全文|摘要|对话/.test(t)) return 'story';
+  // 其余归"回合信息"层（当前回合号等）
+  if (/回合信息|当前回合|剧情输入/.test(t)) return 'turn';
+  return 'other';
+}
+
+const ZONE_META = {
+  director: { label: '🧭 导演指令', cls: 'zone-director' },
+  world: { label: '🗂 世界库 · 卡片', cls: 'zone-world' },
+  story: { label: '📜 剧情上下文', cls: 'zone-story' },
+  turn: { label: '📍 回合信息', cls: 'zone-turn' },
+  other: { label: '📎 其他', cls: 'zone-other' },
+};
+
 function renderPromptDebug() {
   const box = $('prompt-debug');
   if (!box) return;
@@ -1079,21 +1109,27 @@ function renderPromptDebug() {
     } else {
       const req = d.request;
       // —— Request：分层展示 system / messages / tools（content 自动按【段标题】拆分小节）——
+      // 卡片流：先收集所有段（含工具归并），再按 zone（导演/世界库/剧情/回合）分组渲染。
       const secKeyBase = stage + '-' + (d.preview ? 'pv' : 'real') + '-' + (Date.now() % 100000);
-      // 「工具」内容归并：System 里的【工具】用法说明 + 请求级 tools（函数/Schema 声明）
-      // 都属于同一主题，折叠段合并为一段（不再出现两个工具块）。
       let toolsBodyMerged = false;
       const mergeToolsInto = (title) => title === '工具' || title === 'Tools' || title === '🔧 Tools 工具' || title === '工具声明';
+      const collected = []; // {title, body, key}
+      const pushSec = (title, body, key) => {
+        // 工具归并：System/消息里的【工具】段 + 请求级 tools Schema 合为一段
+        if (!toolsBodyMerged && req.tools && mergeToolsInto(title)) {
+          collected.push({
+            title,
+            body: body + '\n\n⬇ 请求级函数声明（Tools Schema，随请求发给模型）\n' + (typeof req.tools === 'string' ? req.tools : JSON.stringify(req.tools, null, 2)),
+            key,
+          });
+          toolsBodyMerged = true;
+          return;
+        }
+        collected.push({ title, body, key });
+      };
       if (req.system) {
         const parts = splitCtxSections(req.system, '🎛 System 系统指令');
-        parts.forEach((p, pi) => {
-          let bodyHtml = `<pre>${esc(p.body)}</pre>`;
-          if (!toolsBodyMerged && req.tools && mergeToolsInto(p.title)) {
-            bodyHtml = `<pre>${esc(p.body)}</pre><div style="font-size:10px;color:var(--dim);padding:6px 10px 0;border-top:1px dashed var(--line);margin-top:6px;">⬇ 请求级函数声明（Tools Schema，随请求发给模型）</div><pre style="border-top:none;">${esc(typeof req.tools === 'string' ? req.tools : JSON.stringify(req.tools, null, 2))}</pre>`;
-            toolsBodyMerged = true;
-          }
-          body.appendChild(dbgSec(secKeyBase + '-sys' + pi, p.title, p.body.length + ' 字符', bodyHtml));
-        });
+        parts.forEach((p, pi) => pushSec(p.title, p.body, secKeyBase + '-sys' + pi));
       }
       (req.messages || []).forEach((m, i) => {
         // 路由的 user 消息承载的是「回合信息 + 世界库 + 近N层剧情」；玩家输入已在近N层末尾，
@@ -1102,19 +1138,25 @@ function renderPromptDebug() {
           ? (stage === 'router' ? '📍 回合信息与剧情输入（玩家输入已含于近N层末尾）' : '💬 玩家输入')
           : m.role;
         const parts = splitCtxSections(m.content, fb);
-        parts.forEach((p, pi) => {
-          // 消息正文里的【工具】类段同样归并（同一主题不重复）
-          let bodyHtml = `<pre>${esc(p.body)}</pre>`;
-          if (!toolsBodyMerged && req.tools && mergeToolsInto(p.title)) {
-            bodyHtml = `<pre>${esc(p.body)}</pre><div style="font-size:10px;color:var(--dim);padding:6px 10px 0;border-top:1px dashed var(--line);margin-top:6px;">⬇ 请求级函数声明（Tools Schema，随请求发给模型）</div><pre style="border-top:none;">${esc(typeof req.tools === 'string' ? req.tools : JSON.stringify(req.tools, null, 2))}</pre>`;
-            toolsBodyMerged = true;
-          }
-          body.appendChild(dbgSec(secKeyBase + '-msg' + i + '-' + pi, p.title, p.body.length + ' 字符', bodyHtml));
-        });
+        parts.forEach((p, pi) => pushSec(p.title, p.body, secKeyBase + '-msg' + i + '-' + pi));
       });
       // 独立 Tools 段：仅在 System/消息里没有「工具」段时兜底出现
       if (req.tools && !toolsBodyMerged) {
-        body.appendChild(dbgSec(secKeyBase + '-tools', '🔧 Tools 工具', '', `<pre>${esc(typeof req.tools === 'string' ? req.tools : JSON.stringify(req.tools, null, 2))}</pre>`));
+        collected.push({ title: '🔧 Tools 工具', body: typeof req.tools === 'string' ? req.tools : JSON.stringify(req.tools, null, 2), key: secKeyBase + '-tools' });
+      }
+      // —— 按 zone 分组渲染（卡片流分区）——
+      const zones = ['director', 'world', 'story', 'turn', 'other'];
+      for (const z of zones) {
+        const items = collected.filter((s) => zoneFor(s.title) === z);
+        if (items.length === 0) continue;
+        const zm = ZONE_META[z];
+        const zh = document.createElement('div');
+        zh.style.cssText = 'font-size:10px;color:var(--gold-soft);font-weight:700;margin:8px 2px 4px;display:flex;align-items:center;gap:6px;';
+        zh.innerHTML = `<span style="width:3px;height:10px;background:var(--gold-soft);border-radius:1px;display:inline-block;"></span>${zm.label}<span style="margin-left:auto;font-weight:400;color:var(--dim2);font-size:9.5px;">${items.length} 张</span>`;
+        body.appendChild(zh);
+        items.forEach((s) => {
+          body.appendChild(dbgSec(s.key, s.title, s.body.length + ' 字符', `<pre>${esc(s.body)}</pre>`));
+        });
       }
       // —— Response：模型完整回复 ——
       const hasRes = d.response != null && d.response !== '';
@@ -1122,6 +1164,10 @@ function renderPromptDebug() {
       const resEmpty = d.preview
         ? '<div style="font-size:10.5px;color:var(--dim);padding:2px 0;">这是预演：路由请求已按当前世界构造，发消息后模型将在此输出抽卡 JSON。</div>'
         : '<div style="font-size:10.5px;color:var(--dim);padding:2px 0;">回复尚未到达（流式输出中/尚未完成）</div>';
+      const resZone = document.createElement('div');
+      resZone.style.cssText = 'font-size:10px;color:var(--gold-soft);font-weight:700;margin:10px 2px 4px;display:flex;align-items:center;gap:6px;border-top:1px dashed var(--line);padding-top:6px;';
+      resZone.innerHTML = `📡 回复<span style="margin-left:auto;font-weight:400;color:var(--dim2);font-size:9.5px;">模型输出</span>`;
+      body.appendChild(resZone);
       body.appendChild(dbgSec(stage + '-res', resTitle, hasRes ? d.response.length + ' 字符' : '', hasRes ? `<pre>${esc(d.response)}</pre>` : resEmpty));
     }
     blk.appendChild(head);
@@ -1843,6 +1889,27 @@ function renderGallery(worldId, cards) {
       };
       head.appendChild(cst);
     }
+    // M-卡片流：skill 式注入级别切换（仅角色卡）—— 全卡(默认) / 摘要卡
+    // 摘要模式 = 路由侧只给一段摘要（省 token），按需点名后由组装器展开全卡。
+    if (c.kind === 'character' && !c.isPlayer) {
+      const cm = document.createElement('span');
+      let modeFull = c.contextMode !== 'summary';
+      cm.textContent = modeFull ? '🟩 全卡' : '⬜ 摘要';
+      cm.title = modeFull
+        ? '完整设定卡：每回合全量注入上下文。点此切换为摘要卡（省 token）。'
+        : '摘要卡：路由只读摘要（标题+描述开头），点名后组装器才展开完整设定。点此切换为全卡。';
+      cm.style.cssText = `font-size:9.5px;padding:0 6px;border-radius:8px;border:1px solid ${modeFull ? 'var(--cyan, #6fc3c3)' : 'var(--line)'};color:${modeFull ? 'var(--cyan, #6fc3c3)' : 'var(--dim)'};background:${modeFull ? 'rgba(111,195,195,.1)' : 'transparent'};cursor:pointer;transition:all .15s;user-select:none;`;
+      cm.onclick = (e) => {
+        e.stopPropagation();
+        ws.send(JSON.stringify({ type: 'card_update', cardId: c.id, patch: { contextMode: modeFull ? 'summary' : 'full' } }));
+        modeFull = !modeFull;
+        cm.textContent = modeFull ? '🟩 全卡' : '⬜ 摘要';
+        cm.style.borderColor = modeFull ? 'var(--cyan, #6fc3c3)' : 'var(--line)';
+        cm.style.color = modeFull ? 'var(--cyan, #6fc3c3)' : 'var(--dim)';
+        cm.style.background = modeFull ? 'rgba(111,195,195,.1)' : 'transparent';
+      };
+      head.appendChild(cm);
+    }
     const tk = document.createElement('span');
     tk.textContent = `≈${c.textTokens ?? '?'}tok`;
     tk.style.cssText = 'margin-left:auto;color:var(--dim);font-size:10px;';
@@ -2273,9 +2340,10 @@ $('cfg-apply').onclick = () => {
   const provider = $('cfg-provider').value;
   const model = $('cfg-model').value;
   const key = $('cfg-key').value.trim();
+  const reasoning = $('cfg-reasoning').value || undefined;
   if (!model || model.startsWith('—')) { cfgLog('请先拉取并选择模型', 'var(--red)'); return; }
-  cfgLog(`应用 ${provider}/${model} 到 ${stage}…`);
-  ws.send(JSON.stringify({ type: 'provider_set', stage, provider, model, apiKey: key }));
+  cfgLog(`应用 ${provider}/${model} 到 ${stage}${reasoning ? `（思考:${reasoning}）` : ''}…`);
+  ws.send(JSON.stringify({ type: 'provider_set', stage, provider, model, apiKey: key, reasoning }));
 };
 
 // hello 后自动加载 provider 列表（见 onmessage hello 分支）

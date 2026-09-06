@@ -11,7 +11,7 @@
  *   新: models.getModel('anthropic','claude-sonnet-4-5') + models.completeSimple(model, ctx)
  */
 import 'dotenv/config';
-import type { Model, Models } from '@earendil-works/pi-ai';
+import type { Model, Models, ThinkingLevel } from '@earendil-works/pi-ai';
 import type { Api } from '@earendil-works/pi-ai';
 import {
   getFauxRegistration,
@@ -25,6 +25,9 @@ export interface ModelConfig {
   provider: string;
   model: string;
   apiKey?: string;
+  /** 思考强度（OpenAI 兼容 reasoning_effort / 各 provider 的 thinking 参数）。
+   *  由网页设置「模型接入 · 思考强度」写入；不传 = 不启用（默认）。 */
+  reasoning?: ThinkingLevel | 'off';
 }
 
 export type StageName = 'router' | 'actor' | 'evaluator';
@@ -138,11 +141,11 @@ export function getFauxModelsCollection(): Models {
 /* ------------------------- 运行时阶段配置（网页/CLI 热设置） ------------------------- */
 
 /** 运行时阶段配置表：网页 provider_set 写入，优先于 .env */
-const runtimeStageConfig: Partial<Record<StageName, { provider: string; model: string }>> = {};
+const runtimeStageConfig: Partial<Record<StageName, { provider: string; model: string; reasoning?: ThinkingLevel | 'off' }>> = {};
 
-/** 设置某阶段的运行时 provider/model（网页 provider_set 调用） */
-export function setStageRuntimeConfig(stage: StageName, provider: string, model: string): void {
-  runtimeStageConfig[stage] = { provider, model };
+/** 设置某阶段的运行时 provider/model/reasoning（网页 provider_set 调用） */
+export function setStageRuntimeConfig(stage: StageName, provider: string, model: string, reasoning?: ThinkingLevel | 'off'): void {
+  runtimeStageConfig[stage] = { provider, model, reasoning };
 }
 
 /** 清除某阶段运行时配置（回退 .env/默认） */
@@ -151,7 +154,7 @@ export function clearStageRuntimeConfig(stage: StageName): void {
 }
 
 /** 当前各阶段的运行时配置快照（供 UI 展示） */
-export function getStageRuntimeConfigs(): Partial<Record<StageName, { provider: string; model: string }>> {
+export function getStageRuntimeConfigs(): Partial<Record<StageName, { provider: string; model: string; reasoning?: ThinkingLevel | 'off' }>> {
   return { ...runtimeStageConfig };
 }
 
@@ -162,10 +165,19 @@ export function resolveModelConfig(stage: StageName, override?: Partial<ModelCon
   const prefix = ENV_PREFIX[stage];
   const def = DEFAULT_MODELS[stage];
   const runtime = runtimeStageConfig[stage];
+  // 思考强度：运行时 > 阶段环境变量（PI_{X}_REASONING）> 默认不启用
+  const envReasoning = process.env[`${prefix}_REASONING`];
+  const reasoning =
+    runtime?.reasoning ??
+    (envReasoning === 'off' || envReasoning === 'minimal' || envReasoning === 'low' || envReasoning === 'medium' || envReasoning === 'high' || envReasoning === 'xhigh' || envReasoning === 'max'
+      ? envReasoning
+      : undefined) ??
+    override?.reasoning;
   return {
     provider: runtime?.provider ?? process.env[`${prefix}_PROVIDER`] ?? override?.provider ?? def.provider,
     model: runtime?.model ?? process.env[`${prefix}_MODEL`] ?? override?.model ?? def.model,
     apiKey: process.env[`${prefix}_API_KEY`] ?? override?.apiKey,
+    reasoning,
   };
 }
 

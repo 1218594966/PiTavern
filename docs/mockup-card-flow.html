@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PiTavern 提示词工作台 · 分级卡片流 V2（示意图）</title>
+<style>
+  :root{
+    --bg:#14120c; --panel:#1e1912; --panel2:#241e14; --line:#3a2f1c; --line-gold:#8a6d2f;
+    --gold:#e8c65a; --gold-soft:#c9a25e; --text:#e8e0d0; --dim:#a0907a; --dim2:#7a6c58;
+    --green:#7ec8a0; --red:#e06c6c; --blue:#7aa7d8; --purple:#b79ae0; --cyan:#6fc3c3;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;padding:26px 22px 50px;line-height:1.55}
+  h1{font-size:19px;color:var(--gold);margin-bottom:3px}
+  .sub{font-size:12px;color:var(--dim);margin-bottom:18px;max-width:1200px}
+  .wrap{max-width:1200px;margin:0 auto}
+
+  /* 层容器 */
+  .zone{border:1px solid var(--line);border-radius:14px;background:var(--panel);margin-bottom:16px;overflow:hidden}
+  .zone-h{padding:10px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;font-size:13.5px;font-weight:700}
+  .zone-h .znum{width:22px;height:22px;border-radius:6px;background:linear-gradient(180deg,#e8c65a,#c9a25e);color:#171208;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center}
+  .zone-h .zn{color:var(--gold-soft);font-size:10.5px;font-weight:400;margin-left:auto}
+  .zone-b{padding:12px 14px}
+
+  /* 卡片 */
+  .card{border:1px solid var(--line);border-left:3px solid var(--kc,#888);border-radius:10px;background:var(--panel2);margin-bottom:7px;overflow:hidden}
+  .card:last-child{margin-bottom:0}
+  .card .ch{display:flex;align-items:center;gap:8px;padding:7px 11px;cursor:pointer;user-select:none}
+  .card .ch .ico{font-size:14px}
+  .card .ch .nm{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .card .ch .cid{font-size:9.5px;color:var(--dim2);font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+  .card .ch .badges{margin-left:auto;display:flex;gap:5px;align-items:center;flex-shrink:0}
+  .bdg{font-size:9.5px;padding:1.5px 7px;border-radius:9px;border:1px solid var(--line);color:var(--dim);white-space:nowrap}
+  .bdg.tok{background:#2a2418;color:var(--gold);border-color:#57482a}
+  .bdg.tok.big{color:#ff9d7a;border-color:#8a4a2a;background:#2a1a12}
+  .bdg.pin{background:#3a2c12;color:var(--gold-soft);border-color:var(--line-gold)}
+  .bdg.sum{background:#201c14;color:var(--dim2);border-color:var(--line)}
+  .bdg.kind{background:rgba(255,255,255,.05);color:var(--kc,#ccc);border-color:rgba(255,255,255,.12)}
+  .bdg.d0{background:#3a2c12;color:var(--gold);border-color:var(--line-gold)}
+  .bdg.d1{background:#14303a;color:#7ac8d8;border-color:#1e4a5a}
+  .bdg.d2{background:#2a2222;color:#c89090;border-color:#4a2e2e}
+  .card .arr{font-size:9px;color:var(--dim2);transition:transform .2s;flex-shrink:0}
+  .card.open .arr{transform:rotate(90deg)}
+  .card .cb{padding:2px 12px 10px 33px;font-size:11px;color:var(--dim);display:none;white-space:pre-wrap;max-height:120px;overflow:hidden;position:relative}
+  .card.open .cb{display:block}
+  .card .cb::after{content:"";position:absolute;left:0;right:0;bottom:0;height:22px;background:linear-gradient(transparent,var(--panel2))}
+  .k-rule{--kc:#b79ae0}.k-tool{--kc:#e0a06c}.k-world{--kc:#6fc3c3}.k-plot{--kc:#7aa7d8}
+  .k-charF{--kc:#e0c37c}.k-charS{--kc:#8a7a5a}.k-scene{--kc:#7ec8a0}.k-sum{--kc:#b79ae0}
+  .k-conv{--kc:#d8a0c0}.k-res{--kc:#9ec8a0}
+
+  /* D 组分组 */
+  .dgroup{border:1px dashed var(--line-gold);border-radius:11px;padding:9px 11px 8px;margin-bottom:10px;background:rgba(212,175,55,.025)}
+  .dgroup .dg-t{font-size:10.5px;font-weight:700;margin-bottom:7px;display:flex;align-items:center;gap:7px}
+  .dgroup .dg-t .dd{font-size:10px;padding:1px 8px;border-radius:8px}
+  .dgroup .dg-t .desc{font-weight:400;color:var(--dim);font-size:10.5px}
+  .dd.d0{background:#3a2c12;color:var(--gold);border:1px solid var(--line-gold)}
+  .dd.d1{background:#14303a;color:#7ac8d8;border:1px solid #1e4a5a}
+  .dd.d2{background:#2a2222;color:#c89090;border:1px solid #4a2e2e}
+
+  /* 角色一级一卡 */
+  .char-lvl{display:flex;flex-direction:column;gap:5px}
+  .lv-row{display:flex;align-items:center;gap:7px}
+  .lv-idx{width:26px;height:26px;border-radius:7px;background:#1b1710;border:1px solid var(--line-gold);color:var(--gold);font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .lv-card{flex:1;min-width:0}
+
+  /* 群组内小卡（剧情两级里的层摘要组） */
+  .kv-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+  .kv{flex:1;min-width:130px;border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:10px;color:var(--dim);background:var(--panel2)}
+  .kv b{display:block;color:var(--text);font-size:11px}
+
+  .mini{font-size:10px;color:var(--dim2);font-style:italic}
+  .flowline{display:flex;align-items:center;gap:10px}
+  .reqbox,.resbox{flex:1;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  .reqbox{border-left:3px solid var(--gold);background:var(--panel2)}
+  .resbox{border-left:3px solid var(--green);background:var(--panel2)}
+  .box-t{font-size:10px;color:var(--dim2);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+  .box-t .who{color:var(--text);font-size:12px;font-weight:700}
+  .box-t .ml{margin-left:auto}
+  .fn{font-family:ui-monospace,Consolas,monospace;color:var(--gold);font-size:12px}
+  .fields{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+  .fd{border:1px solid var(--line);border-radius:7px;background:#1a1710;padding:3px 8px;font-size:10px;color:var(--dim)}
+  .fd b{color:var(--text);font-weight:600}
+  .fd .v{color:var(--gold-soft)}
+  .ghost{color:var(--dim2)}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;border-top:1px solid var(--line);padding-top:12px;font-size:11px;color:var(--dim)}
+  .legend .it{display:flex;align-items:center;gap:6px}
+  .sw{width:14px;height:14px;border-radius:4px;display:inline-block;border:1px solid rgba(255,255,255,.1)}
+  .callout{border:1px solid #4a3d22;background:#241d0f;border-radius:10px;padding:9px 12px;font-size:11px;color:var(--dim);margin:12px 0 2px}
+  .callout b{color:var(--gold-soft)}
+</style>
+</head>
+<body>
+
+<h1>🗂 提示词工作台 ·「模型收发」改造示意 <span style="font-size:11px;color:var(--gold-soft)">V2</span></h1>
+<div class="sub">按修正后理解重画：① 输出归回复区 ② 世界库按 D0/D1/D2 有序 ③ 在场角色 = 一人一级卡 ④ 剧情上下文两级（与记忆分层设置一致）→ 最后才是回复</div>
+
+<div class="wrap">
+
+<!-- ============ ① 导演指令 ============ -->
+<div class="zone">
+  <div class="zone-h"><span class="znum">1</span>🧭 导演指令 <span class="zn">System · 规则 + 工具（无"输出"——输出归回复区）</span></div>
+  <div class="zone-b">
+    <div class="card k-rule open"><div class="ch"><span class="arr">▶</span><span class="ico">🎛</span><span class="nm">规则 · 导演总纲</span><span class="cid">system</span><span class="badges"><span class="bdg kind">System</span><span class="bdg tok">319 tok</span></span></div>
+      <div class="cb">你是这场 RPG 的「选角导演」。每次玩家行动，做一回合的叙事编排。
+- 顺着剧情自然发展…
+- 📌常驻内容已全量给你…
+- 已在场角色默认保留；主讲只选一个…</div></div>
+    <div class="card k-tool open"><div class="ch"><span class="arr">▶</span><span class="ico">🔧</span><span class="nm">工具 · route_cards</span><span class="cid">tools[0]</span><span class="badges"><span class="bdg kind">Function</span><span class="bdg tok">330 tok</span><span class="bdg pin">Schema 折叠</span></span></div>
+      <div class="cb">sceneCardId · characterCardIds · speakerCharacterId · memoryCardIds · itemCardIds · historyWindow · turn
+（完整 JSON Schema 点开才展开）</div></div>
+    <div class="mini" style="margin-top:7px">→ 原【输出：只调用 route_cards…】不再作为指令卡出现，它的归宿 = 底部回复区的模型输出。</div>
+  </div>
+</div>
+
+<!-- ============ ② 世界库 ============ -->
+<div class="zone">
+  <div class="zone-h"><span class="znum">2</span>🗂 世界库 <span class="zn">参考 ST lorebook 深度：D0 常驻 → D1 在场展开 → D2 按需召回（顺序固定，不乱放）</span></div>
+  <div class="zone-b">
+
+    <!-- D0 -->
+    <div class="dgroup">
+      <div class="dg-t"><span class="dd d0">D0</span>常驻 · 每回合必插（全量卡）<span class="desc">世界观 / 主线 / 规则状态机 / 常驻角色 —— 排最前，顺序固定</span></div>
+      <div class="card k-world open"><div class="ch"><span class="arr">▶</span><span class="ico">🌍</span><span class="nm">世界观 · 浮城（华城）</span><span class="cid">mem_浮城</span><span class="badges"><span class="bdg kind">worldview</span><span class="bdg d0">D0</span><span class="bdg tok big">2679 tok</span></span></div>
+        <div class="cb">世界名称: 浮城… 地理格局 / 社会结构 / 潜规则网络 / 典型场景 / 时代背景（超重提示：标红）</div></div>
+      <div class="card k-plot open"><div class="ch"><span class="arr">▶</span><span class="ico">📖</span><span class="nm">主线大纲 · 暧昧高手</span><span class="cid">mem_大纲</span><span class="badges"><span class="bdg kind">plot</span><span class="bdg d0">D0</span><span class="bdg tok">494+246+876 tok</span></span></div>
+        <div class="cb">平安县篇 / 选秀黑幕篇 / 江德篇 /【未来方向】【关键节点】…</div></div>
+      <div class="card k-rule"><div class="ch"><span class="arr">▶</span><span class="ico">🧭</span><span class="nm">规则状态机 · …（若有）</span><span class="badges"><span class="bdg kind">rule</span><span class="bdg d0">D0</span><span class="bdg tok">…</span></span></div></div>
+    </div>
+
+    <!-- D1 -->
+    <div class="dgroup">
+      <div class="dg-t"><span class="dd d1">D1</span>当前在场 · 本回合展开<span class="desc">角色档案 → 场景卡</span></div>
+      <div style="font-size:10.5px;color:var(--dim);margin:0 0 5px 2px">在场角色档案 —— 每个角色一级，常驻=完整卡，非常驻=摘要卡（点击下钻画廊同款完整设定）</div>
+      <div class="char-lvl">
+        <div class="lv-row"><div class="lv-idx">L1</div>
+          <div class="lv-card card k-charF open"><div class="ch"><span class="arr">▶</span><span class="ico">🧙</span><span class="nm">郑剑 · 完整设定</span><span class="cid">char_…29vvww</span><span class="badges"><span class="bdg kind">character</span><span class="bdg pin">📌 常驻</span><span class="bdg tok">~600 tok</span></span></div>
+            <div class="cb">【基本信息】学习委员，家境优越，父亲是纪委书记…【性格】表面品学兼优，实际心胸狭隘、嫉妒心强…【成长】竞赛作弊旧事…（完整卡）</div></div>
+        </div>
+        <div class="lv-row"><div class="lv-idx">L2</div>
+          <div class="lv-card card k-charF open"><div class="ch"><span class="arr">▶</span><span class="ico">🧙</span><span class="nm">方佳怡 · 完整设定</span><span class="cid">char_…xo1gom</span><span class="badges"><span class="bdg kind">character</span><span class="bdg pin">📌 常驻</span><span class="bdg tok">~580 tok</span></span></div>
+            <div class="cb">校花，成绩优异… 与{{user}}的过往：黑板报/搏斗/重高之约…</div></div>
+        </div>
+        <div class="lv-row"><div class="lv-idx">L3</div>
+          <div class="lv-card card k-charS open"><div class="ch"><span class="arr">▶</span><span class="ico">🧙</span><span class="nm">安老头 · 摘要</span><span class="cid">char_…069nk1</span><span class="badges"><span class="bdg kind">character</span><span class="bdg sum">摘要</span><span class="bdg tok">~90 tok</span></span></div>
+            <div class="cb">学校门房老人，与{{user}}相识。完整设定未注入 → 点此查看 / 让导演点名展开</div></div>
+        </div>
+        <div class="lv-row"><div class="lv-idx">L4</div>
+          <div class="lv-card card k-charS"><div class="ch"><span class="arr">▶</span><span class="ico">🧙</span><span class="nm">范健 · 摘要</span><span class="cid">char_…at5qpv</span><span class="badges"><span class="bdg kind">character</span><span class="bdg sum">摘要</span><span class="bdg tok">~85 tok</span></span></div></div>
+        </div>
+        <div class="mini" style="padding-left:33px">…（L5 范涛 · L6 胡力 · L7 柳婷 · L8 江静 … 依在场名单顺序，一个角色一级）</div>
+      </div>
+
+      <div style="margin-top:9px"></div>
+      <div class="card k-scene open"><div class="ch"><span class="arr">▶</span><span class="ico">🏰</span><span class="nm">场景 · 初三(7)班教室</span><span class="cid">scene_校园_default</span><span class="badges"><span class="bdg kind">scene</span><span class="bdg d1">D1</span><span class="bdg tok">~200 tok</span></span></div>
+        <div class="cb">九月的午后… 课桌排列、讲台、窗外阳光…（当前场景全量描述）</div></div>
+    </div>
+
+    <!-- D2 -->
+    <div class="dgroup">
+      <div class="dg-t"><span class="dd d2">D2</span>档案索引 · 按需点名召回<span class="desc">未在场角色 / 旧事记忆 / 物品 —— 仅一行索引，导演点名后才升级成完整卡（低 token）</span></div>
+      <div class="card k-charS"><div class="ch"><span class="arr">▶</span><span class="ico">🗂</span><span class="nm">档案总览（12 未点名角色 · 34 记忆 · 8 物品）</span><span class="badges"><span class="bdg d2">D2</span><span class="bdg tok">~110 tok</span></span></div></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============ ③ 剧情上下文 ============ -->
+<div class="zone">
+  <div class="zone-h"><span class="znum">3</span>📜 剧情上下文 <span class="zn">两级 · 与设置「记忆分层」一致（every=20 / buffer=10）</span></div>
+  <div class="zone-b">
+    <div class="card k-sum"><div class="ch"><span class="arr">▶</span><span class="ico">💭</span><span class="nm">第一级 · 分层历史摘要</span><span class="badges"><span class="bdg kind">summary</span><span class="bdg tok">压缩层</span></span></div></div>
+    <div style="padding:2px 0 8px 30px;display:flex;flex-direction:column;gap:4px">
+      <div class="kv-row">
+        <div class="kv"><b>📌 第 1-20 层回顾</b>金针觉醒、随堂测验风波、与方佳怡相识…</div>
+        <div class="kv"><b>📌 第 21-40 层回顾</b>（若已压缩）黑板报事件、公交解围…</div>
+        <div class="kv ghost"><b>＋ 更早层已归档折叠</b></div>
+      </div>
+    </div>
+    <div class="card k-conv open"><div class="ch"><span class="arr">▶</span><span class="ico">🧵</span><span class="nm">第二级 · 最近缓冲全文（第 21-30 层完整对话）</span><span class="cid">buffer 10 层</span><span class="badges"><span class="bdg kind">history</span><span class="bdg tok">~1132 tok</span></span></div>
+      <div class="cb">校园: 九月的午后，阳光被窗帘滤去…（完整聊天记录，不截断——玩家最新输入必在尾部）</div></div>
+  </div>
+</div>
+
+<!-- ============ ④ 回复 ============ -->
+<div class="zone">
+  <div class="zone-h"><span class="znum">4</span>📡 回合收发 <span class="zn">回复区 = 模型的「输出」—— route_cards 调用结果</span></div>
+  <div class="zone-b">
+    <div class="flowline">
+      <div class="reqbox">
+        <div class="box-t">📤 请求 <span class="who">PreRouter</span><span class="ml mini">规则+工具+D0卡+D1卡+D2索引+剧情</span></div>
+        <div style="font-size:10.5px;color:var(--dim)">把上面 ①②③ 的卡片按序组装发给选角导演</div>
+      </div>
+      <span class="ghost" style="font-size:16px">→</span>
+      <div class="resbox">
+        <div class="box-t">📥 回复 <span class="who">模型输出</span><span class="ml bdg kind">route_cards</span></div>
+        <div style="font-size:10.5px;color:var(--dim)">（就是原来【输出】段描述的那个东西，在这展示）</div>
+        <div class="fields">
+          <div class="fd"><b>sceneCardId</b> <span class="v">scene_校园_default</span></div>
+          <div class="fd"><b>speaker</b> <span class="v">郑剑</span></div>
+          <div class="fd"><b>在场</b> <span class="v">郑剑、方佳怡、安老头…</span></div>
+          <div class="fd"><b>memory</b> <span class="v">[]</span></div>
+          <div class="fd"><b>items</b> <span class="v">[]</span></div>
+          <div class="fd"><b>turn</b> <span class="v">2</span></div>
+        </div>
+        <div class="mini" style="margin-top:7px">+ reasoning 一句话决策理由（不进正文，折叠展示）</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="callout">💡 数据来源说明：路由（导演）当前实际收到的是「角色摘要 + 索引」，完整角色卡是点名后由 Assembler 展开给演员（Actor）。上图是「回合全貌」的理想视图 —— 落地时需要把 <b>router 请求 + assembler 展开</b>两段信息合一展示，或按阶段分别展示（这点要你拍板）。</div>
+
+<div class="legend">
+  <div class="it"><span class="sw" style="background:#6fc3c3"></span>🌍 世界观 D0</div>
+  <div class="it"><span class="sw" style="background:#7aa7d8"></span>📖 主线 D0</div>
+  <div class="it"><span class="sw" style="background:#e0c37c"></span>🧙 常驻角色完整卡</div>
+  <div class="it"><span class="sw" style="background:#8a7a5a"></span>🧙 非常驻摘要卡</div>
+  <div class="it"><span class="sw" style="background:#7ec8a0"></span>🏰 场景 D1</div>
+  <div class="it"><span class="sw" style="background:#b79ae0"></span>💭 历史摘要</div>
+  <div class="it"><span class="sw" style="background:#d8a0c0"></span>🧵 缓冲全文</div>
+  <div class="it"><span class="sw" style="background:#e0a06c"></span>🔧 工具</div>
+  <div class="it"><span style="background:#3a2c12;border-color:#8a6d2f;color:#c9a25e;text-align:center;font-size:9px;line-height:14px">📌</span>常驻</div>
+  <div class="it"><span class="sw" style="background:#2a1a12;border-color:#8a4a2a;color:#ff9d7a;text-align:center;font-size:9px;line-height:14px">!</span>超重标红</div>
+</div>
+
+<div class="mini" style="margin-top:10px">※ 静态示意图：点击卡片可折叠/展开。用于确认信息架构，非最终样式。</div>
+</div>
+
+<script>
+document.querySelectorAll('.card').forEach(card=>{
+  const h=card.querySelector('.ch');
+  if(h) h.addEventListener('click',()=>card.classList.toggle('open'));
+});
+</script>
+</body>
+</html>

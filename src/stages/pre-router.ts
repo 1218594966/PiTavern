@@ -24,8 +24,10 @@ import type { Context } from '@earendil-works/pi-ai';
 import type { Api } from '@earendil-works/pi-ai';
 import type { Models } from '@earendil-works/pi-ai';
 import type { Card, HistoryLine, RouteDecision } from '../types.js';
+import type { ThinkingLevel } from '@earendil-works/pi-ai';
 import type { WorldState } from '../db/store.js';
 import { completeWithRetry, messageError } from '../config/robust-llm.js';
+import { renderCard } from './assembler.js';
 import { ctxToDebugPrompt, ctxToStructured, messageContentToText } from '../utils/prompt-debug.js';
 import { PitavernError } from '../config/errors.js';
 
@@ -35,10 +37,15 @@ export interface RouterInput {
   state: WorldState;
   /** 玩家刚发的这句话 */
   userMessage: string;
+  /** 玩家名（renderCard 宏展开 {{user}}；缺省 <user> 兜底） */
+  userName?: string;
   /** 当前场景卡（判断换场） */
   currentScene: Card & { data: { presentCharacterIds: string[] } };
   /** 全量角色卡索引（id + 名字 + 摘要，50 个也不怕；constant=主要NPC常驻） */
   characters: Array<{ id: string; name: string; role: string; constant?: boolean }>;
+  /** 当前在场角色的完整卡（M-路由全卡：导演每回合读在场全卡，
+   *  不再只给一行索引——演员同款 renderCard 渲染；卡带 contextMode='summary' 时渲染为摘要卡） */
+  presentCards?: Card[];
   /** 全量记忆切片索引 */
   memories: Array<{ id: string; ownerCharacterId: string; summary: string; keywords: string[]; relatedIds: string[] }>;
   /** 全量物品卡索引 */
@@ -99,8 +106,10 @@ const routeSchema = Type.Object(
  * 非常驻卡 = 声明式档案：知道其人大概，点名（route_cards 填 id）后 assembler 才展开全文给演员。
  */
 export function buildRouterContext(input: RouterInput): Context {
-  const { state, currentScene, characters, memories, items, constants } = input;
+  const { state, currentScene, characters, memories, items, constants, userName } = input;
   const presentNames = state.presentCharacterIds
+    // 玩家卡不出现在在场名单（它是"我"；校园场景 presentCharacterIds 可能含玩家卡 id）
+    .filter((id) => !String(id).startsWith('char_player_'))
     .map((id) => characters.find((c) => c.id === id)?.name ?? id)
     .join('、');
 
@@ -133,15 +142,32 @@ export function buildRouterContext(input: RouterInput): Context {
   const constCharIndex = characters
     .filter((c) => constIds.has(c.id))
     .map((c) => `- ${c.id}: ${c.name}（📌常驻，设定已全量注入）${state.presentCharacterIds.includes(c.id) ? ' ← 已在场' : ''}`);
+  // 未在场角色：只在档案总览里给一行（在场角色已有全卡段，不重复列）
   const charFiles = characters
-    .filter((c) => !constIds.has(c.id))
-    .map((c) => `- ${c.id}: ${c.name}（${c.role}）${state.presentCharacterIds.includes(c.id) ? '← 已在场' : '← 未在场，点名后展开设定'}`);
+    .filter((c) => !constIds.has(c.id) && !state.presentCharacterIds.includes(c.id))
+    .map((c) => `- ${c.id}: ${c.name}（${c.role}）← 未在场，点名后展开设定`);
   const memoryFiles = memories
     .map((m) => `- ${m.id}: ${m.summary}${m.keywords && m.keywords.length ? `（触发词: ${m.keywords.join('、')}）` : ''}`);
   const itemFiles = items
     .map((i) => `- ${i.id}: ${i.name}（${i.description}${i.location === 'player' ? '，在玩家身上' : i.location === 'character' ? '，在某角色处' : ''}）`);
 
-  // ============ 3) user 消息 ============
+  // ============ 3) 在场角色全卡（skill 式：上下文注入级别） ============
+  // 导演每回合直接读在场角色的完整设定卡（不再只给一行索引）；
+  // 卡 data.contextMode === 'summary' 时降级为摘要卡（省 token，标题+性格一句话）。
+  // 未在场角色仍走档案总览索引（点名后 assembler 展开给演员）。
+  const presentCardText = (input.presentCards ?? [])
+    .filter((c) => c.kind === 'character')
+    .map((c) => {
+      const d = c.data as { contextMode?: string; name?: string; description?: string; personality?: string };
+      if (d.contextMode === 'summary') {
+        const cv = { userName: input.userName ?? '', charName: d.name ?? c.id };
+        return `【角色（摘要）· ${d.name ?? c.id}】${d.description?.slice(0, 120) ?? ''}${d.personality ? `性格: ${d.personality.slice(0, 60)}` : ''}（完整设定可点名后由组装器展开）`;
+      }
+      return renderCard(c, { userName: input.userName ?? '' });
+    })
+    .join('\n\n');
+
+  // ============ 4) user 消息 ============
   return {
     systemPrompt,
     messages: [
@@ -149,11 +175,12 @@ export function buildRouterContext(input: RouterInput): Context {
         role: 'user',
         content: [
           `当前回合号: ${state.turn} | 当前场景: ${currentScene.id}（在场: ${presentNames || '无人'}）`,
+          ...(presentCardText ? ['', '【世界库 · 在场角色全卡】', presentCardText] : []),
           ...(constText ? ['', '【世界库 · 常驻设定（全量，直接使用）】', constText] : []),
           ...(constCharIndex.length || charFiles.length || memoryFiles.length || itemFiles.length
             ? ['', '【世界库 · 档案总览】',
               ...(constCharIndex.length ? ['📌 常驻角色（全量已注入，作索引）:', ...constCharIndex] : []),
-              ...(charFiles.length ? ['🧙 角色（点名后展开）:', ...charFiles] : []),
+              ...(charFiles.length ? ['🧙 未在场角色（点名后展开）:', ...charFiles] : []),
               ...(memoryFiles.length ? ['📌 旧事/线索（点名后展开）:', ...memoryFiles] : []),
               ...(itemFiles.length ? ['🗡️ 物品（点名后展开）:', ...itemFiles] : []),
             ]
@@ -322,13 +349,14 @@ export async function preRouter(
   models: Models,
   model: Model<Api>,
   input: RouterInput,
-  opts: { apiKey?: string } = {},
+  opts: { apiKey?: string; reasoning?: ThinkingLevel | 'off' } = {},
 ): Promise<PreRouterResult> {
   const t0 = performance.now();
   const ctx = buildRouterContext(input);
 
   const call = await completeWithRetry(models, model, ctx, {
     apiKey: opts.apiKey,
+    reasoning: opts.reasoning,
     // 路由只输出一份小 JSON：低温稳定格式；长度放宽（reasoning 型模型会先想再答，
     // 500 容易被截断成半截 JSON → 解析失败）
     maxTokens: 1200,

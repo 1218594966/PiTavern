@@ -13,12 +13,14 @@
  * 注意：不使用 pi-ai 内置 retryAssistantCall —— 阶段语义需要「超时即放弃」，
  * 且调用方要拿到每个 attempt 的耗时与错误信息做阶段面板展示。
  */
-import type { Api, AssistantMessage, Context, Model, Models } from '@earendil-works/pi-ai';
+import type { Api, AssistantMessage, Context, Model, Models, ThinkingLevel } from '@earendil-works/pi-ai';
 
 export interface CompleteOptions {
   apiKey?: string;
   maxTokens?: number;
   temperature?: number;
+  /** 思考强度（OpenAI 兼容 reasoning_effort；'off' = 不传，关闭思考） */
+  reasoning?: ThinkingLevel | 'off';
   /** 单次请求超时（ms）。默认 60s。 */
   timeoutMs?: number;
   /** 超时/瞬时错误后的最大重试次数。默认 1（共最多 2 次尝试）。 */
@@ -88,7 +90,7 @@ async function completeOnce(
   models: Models,
   model: Model<Api>,
   ctx: Context,
-  opts: { apiKey?: string; maxTokens?: number; temperature?: number; timeoutMs: number },
+  opts: { apiKey?: string; maxTokens?: number; temperature?: number; reasoning?: ThinkingLevel | 'off'; timeoutMs: number },
 ): Promise<AssistantMessage> {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(new Error(`请求超时（> ${opts.timeoutMs}ms）`)), opts.timeoutMs);
@@ -97,6 +99,7 @@ async function completeOnce(
       apiKey: opts.apiKey,
       maxTokens: opts.maxTokens,
       temperature: opts.temperature,
+      reasoning: opts.reasoning === 'off' ? undefined : opts.reasoning,
       signal: ac.signal,
     });
   } finally {
@@ -139,6 +142,7 @@ export async function completeWithRetry(
         apiKey: opts.apiKey,
         maxTokens: opts.maxTokens,
         temperature: opts.temperature,
+        reasoning: opts.reasoning,
         timeoutMs,
       });
     } catch (err) {
@@ -194,6 +198,8 @@ async function waitForToken(throttle: Throttle, budgetMs: number): Promise<boole
 
 export interface StreamHandleOptions {
   apiKey?: string;
+  /** 思考强度（OpenAI 兼容 reasoning_effort；'off' = 不传，关闭思考） */
+  reasoning?: ThinkingLevel | 'off';
   /** 流空闲超时（ms）：距上一个事件超过该时长即熔断。默认 30s。 */
   idleTimeoutMs?: number;
 }
@@ -226,7 +232,7 @@ export async function collectStream(
 ): Promise<StreamResult> {
   const idleTimeoutMs = opts.idleTimeoutMs ?? 30_000;
   const ac = new AbortController();
-  const stream = models.streamSimple(model, ctx, { apiKey: opts.apiKey, signal: ac.signal });
+  const stream = models.streamSimple(model, ctx, { apiKey: opts.apiKey, reasoning: opts.reasoning === 'off' ? undefined : opts.reasoning, signal: ac.signal });
 
   let full = '';
   let usage: StreamResult['usage'] = null;

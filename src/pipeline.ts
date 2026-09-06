@@ -16,6 +16,7 @@
  * - 阶段 4 结算走按会话共享的 runner（post-evaluator.ts），同一会话的结算
  *   串行化 + 只结算最新一单，杜绝慢结算互相覆盖 state。
  */
+import type { ThinkingLevel } from '@earendil-works/pi-ai';
 import type { Model } from '@earendil-works/pi-ai';
 import type { Api } from '@earendil-works/pi-ai';
 import type { Models } from '@earendil-works/pi-ai';
@@ -56,6 +57,8 @@ export interface PipelineConfig {
   settle?: boolean;
   /** 各阶段请求级 apiKey 覆盖（未提供时走 provider auth 解析） */
   apiKeys?: { router?: string; actor?: string; evaluator?: string };
+  /** 各阶段思考强度（OpenAI 兼容 reasoning_effort；缺省不启用思考） */
+  reasoning?: { router?: ThinkingLevel | 'off'; actor?: ThinkingLevel | 'off'; evaluator?: ThinkingLevel | 'off' };
   /** 外部传入的 requestId（不传则内部生成），用于日志串联 */
   requestId?: string;
   /** 演员流空闲超时（ms），默认 45s */
@@ -288,6 +291,14 @@ async function runTurnInner(cfg: PipelineConfig, index: WorldIndex, userMessage:
       memories: index.memories,
       items: index.items,
       recentLines: routerRecent,
+      // 在场角色全卡（导演每回合读全卡，不只一行索引）：
+      // 玩家卡不塞；非常驻在场卡按需要从 allCards 取（contextMode='summary' 时路由侧渲染摘要）
+      presentCards: index.allCards.filter(
+        (c) => c.kind === 'character'
+          && state.presentCharacterIds.includes(c.id)
+          && !((c.data as CharacterCardData).isPlayer === true),
+      ),
+      userName: cfg.userName,
       // 分层摘要链：让路由知道全部剧情的大概（l1-20、l21-40…）
       layerSummaries: index.layerSummaries ?? [],
       routerSystemTemplate: cfg.promptTemplates?.routerSystem,
@@ -304,7 +315,7 @@ async function runTurnInner(cfg: PipelineConfig, index: WorldIndex, userMessage:
             text: (d.detail ?? d.description ?? '').trim(),
           };
         }),
-    }, { apiKey: cfg.apiKeys?.router });
+    }, { apiKey: cfg.apiKeys?.router, reasoning: cfg.reasoning?.router });
   } catch (err) {
     emit({ type: 'stage', stage: 'router', status: 'error', detail: String(err) });
     throw err;
@@ -398,7 +409,7 @@ async function runTurnInner(cfg: PipelineConfig, index: WorldIndex, userMessage:
   const streamResult = await consumeActorStream(cfg.models, cfg.actorModel, actorContext, (d) => {
     onDelta?.(d);
     emit({ type: 'stage', stage: 'actor', status: 'delta', detail: d });
-  }, { apiKey: cfg.apiKeys?.actor, idleTimeoutMs: cfg.actorIdleTimeoutMs ?? 45_000 });
+  }, { apiKey: cfg.apiKeys?.actor, reasoning: cfg.reasoning?.actor, idleTimeoutMs: cfg.actorIdleTimeoutMs ?? 45_000 });
   const actorMs = performance.now() - t2;
   const reply = streamResult.reply;
 
@@ -450,7 +461,7 @@ async function runTurnInner(cfg: PipelineConfig, index: WorldIndex, userMessage:
             lines: layerLines,
             characterNames: charNames,
             useRealModel: Boolean(cfg.apiKeys?.evaluator),
-          }, { apiKey: cfg.apiKeys?.evaluator });
+          }, { apiKey: cfg.apiKeys?.evaluator, reasoning: cfg.reasoning?.evaluator });
           if (res) emit({ type: 'stage', stage: 'evaluator', status: 'done', detail: { layerSummary: res.cardId, realModel: res.realModel } });
         }
       } catch (err) {
@@ -487,6 +498,7 @@ async function runTurnInner(cfg: PipelineConfig, index: WorldIndex, userMessage:
     emit({ type: 'stage', stage: 'evaluator', status: 'start' });
     postEvaluatorRunAsync(cfg.models, cfg.evaluatorModel, evalInput, store, {
       apiKey: cfg.apiKeys?.evaluator,
+      reasoning: cfg.reasoning?.evaluator,
       onError: (err) => {
         const msg = err instanceof Error ? err.message : String(err);
         log.warn(`结算后台任务异常 requestId=${requestId}`, { error: msg });

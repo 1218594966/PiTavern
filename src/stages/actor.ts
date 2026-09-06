@@ -13,6 +13,7 @@
  */
 import type { Model } from '@earendil-works/pi-ai';
 import type { Api } from '@earendil-works/pi-ai';
+import type { ThinkingLevel } from '@earendil-works/pi-ai';
 import type { Context } from '@earendil-works/pi-ai';
 import type { AssistantMessageEvent } from '@earendil-works/pi-ai';
 import type { Models } from '@earendil-works/pi-ai';
@@ -30,10 +31,11 @@ export interface ActorHandle {
 }
 
 /** 把 context 交给演员，返回事件流句柄（不 await 正文，交给调用方逐个事件推流） */
-export function actorEngine(models: Models, model: Model<Api>, context: Context, opts: { apiKey?: string } = {}): ActorHandle {
+export function actorEngine(models: Models, model: Model<Api>, context: Context, opts: { apiKey?: string; reasoning?: ThinkingLevel | 'off' } = {}): ActorHandle {
   const s = models.streamSimple(model, context, {
-    // 对戏不需要思考，进一步压低首字延迟
+    // 对戏默认不需要思考（压低首字延迟）；设置「思考强度」后可开启
     apiKey: opts.apiKey,
+    reasoning: opts.reasoning === 'off' ? undefined : opts.reasoning,
   });
 
   let full = '';
@@ -92,10 +94,11 @@ export async function consumeActorStream(
   model: Model<Api>,
   context: Context,
   onDelta?: (delta: string) => void,
-  opts: { apiKey?: string; idleTimeoutMs?: number } = {},
+  opts: { apiKey?: string; reasoning?: ThinkingLevel | 'off'; idleTimeoutMs?: number } = {},
 ): Promise<ConsumeResult> {
   const result = await collectStream(models, model, context, onDelta, {
     apiKey: opts.apiKey,
+    reasoning: opts.reasoning,
     idleTimeoutMs: opts.idleTimeoutMs,
   });
   return {

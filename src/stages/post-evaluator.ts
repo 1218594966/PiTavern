@@ -17,6 +17,7 @@
  *   用 newMemoryCards 承载值得长期记住的变化。
  */
 import { Type } from '@earendil-works/pi-ai';
+import type { ThinkingLevel } from '@earendil-works/pi-ai';
 import type { Model } from '@earendil-works/pi-ai';
 import type { Api } from '@earendil-works/pi-ai';
 import type { Context } from '@earendil-works/pi-ai';
@@ -354,6 +355,7 @@ export interface EvaluatorJob {
   onError?: (err: unknown) => void;
   onDone?: (result: EvalResult) => void;
   apiKey?: string;
+  reasoning?: ThinkingLevel | 'off';
 }
 
 export interface EvaluatorRunner {
@@ -375,6 +377,7 @@ export function createEvaluatorRunner(): EvaluatorRunner {
       const ctx = buildEvalContext(job.input);
       const call = await completeWithRetry(job.models, job.model, ctx, {
         apiKey: job.apiKey,
+        reasoning: job.reasoning,
         // 结算单是结构化 JSON：限制输出 + 低温稳定格式
         maxTokens: 800,
         temperature: 0.2,
@@ -429,7 +432,7 @@ export function postEvaluatorRunAsync(
   model: Model<Api>,
   input: EvalInput,
   store: CardStore,
-  opts: { onError?: (err: unknown) => void; onDone?: (result: EvalResult) => void; apiKey?: string } = {},
+  opts: { onError?: (err: unknown) => void; onDone?: (result: EvalResult) => void; apiKey?: string; reasoning?: ThinkingLevel | 'off' } = {},
 ): void {
   getRunnerFor(input).schedule({ models, model, input, store, ...opts });
 }
@@ -440,10 +443,10 @@ export async function postEvaluatorSync(
   model: Model<Api>,
   input: EvalInput,
   store: CardStore,
-  opts: { apiKey?: string } = {},
+  opts: { apiKey?: string; reasoning?: ThinkingLevel | 'off' } = {},
 ): Promise<EvalResult> {
   const ctx = buildEvalContext(input);
-  const call = await completeWithRetry(models, model, ctx, { apiKey: opts.apiKey, maxRetries: 0 });
+  const call = await completeWithRetry(models, model, ctx, { apiKey: opts.apiKey, reasoning: opts.reasoning, maxRetries: 0 });
   if (!call.message) throw new PitavernError('MODEL_FAILED', `无法解析结算输出: ${call.error ?? '未知错误'}`);
   const result = parseEvalResult(call.message);
   if (!result) throw new PitavernError('MODEL_FAILED', `无法解析结算输出: ${messageError(call.message) || '内容为空或非 JSON'}`);

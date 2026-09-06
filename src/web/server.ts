@@ -25,6 +25,7 @@ import {
   setStageRuntimeConfig,
   stageUsesRealModel,
   resolveStageModelAsync,
+  resolveModelConfig,
 } from '../config/models.js';
 import {
   listProviderCatalog,
@@ -260,6 +261,7 @@ async function main() {
         layerFrom: c.kind === 'memory' && typeof cd.layerFrom === 'number' ? cd.layerFrom : undefined,
         layerTo: c.kind === 'memory' && typeof cd.layerTo === 'number' ? cd.layerTo : undefined,
         isPlayer: c.kind === 'character' && cd.isPlayer === true ? true : undefined,
+        contextMode: c.kind === 'character' && (cd as { contextMode?: string }).contextMode === 'summary' ? 'summary' : undefined,
         constant: c.constant === true ? true : undefined,
         mclass: c.kind === 'memory' && typeof (cd as { mclass?: string }).mclass === 'string' ? (cd as { mclass?: string }).mclass : undefined,
         detail: c.kind === 'memory' && typeof (cd as { detail?: string }).detail === 'string' ? (cd as { detail?: string }).detail : undefined,
@@ -291,6 +293,12 @@ async function main() {
       actor: apiKeyForStage('actor', stageModels.actor.provider),
       evaluator: apiKeyForStage('evaluator', stageModels.evaluator.provider),
     };
+    // 思考强度：各阶段独立（provider_set 写入运行时配置）
+    const reasoning = {
+      router: resolveModelConfig('router').reasoning,
+      actor: resolveModelConfig('actor').reasoning,
+      evaluator: resolveModelConfig('evaluator').reasoning,
+    };
     // 会话状态快照合并进索引（场景/在场/回合/好感 overlay 都是会话独立的）
     const idx = { ...worldIndex, state: chat.state };
     const result = await runTurn(
@@ -303,6 +311,7 @@ async function main() {
         evaluatorModel: stageModels.evaluator,
         store,
         apiKeys,
+        reasoning,
         userName: chat.persona?.name?.trim() || undefined,
         // 记忆分层两参数：兼容旧 summaryEveryTurns（= compressEvery, buffer 0）
         layerCompressEvery: chat.settings?.layerCompressEvery ?? chat.settings?.summaryEveryTurns ?? 0,
@@ -920,6 +929,13 @@ async function main() {
                   memories: index.memories,
                   items: index.items,
                   recentLines: chat ? (await store.allChatMessages(chatId ?? '')).slice(-4) : [],
+                  // 在场角色全卡（与真实回合同款：导演每回合读全卡）
+                  presentCards: index.allCards.filter(
+                    (c) => c.kind === 'character'
+                      && state.presentCharacterIds.includes(c.id)
+                      && !((c.data as { isPlayer?: boolean }).isPlayer === true),
+                  ),
+                  userName: chat?.persona?.name?.trim() || undefined,
                   // M15：常驻全量段与真实回合同款
                   constants: index.constants
                     .filter((c) => c.kind !== 'system' && !((c.data as { isPlayer?: boolean }).isPlayer === true))
@@ -1099,6 +1115,11 @@ async function main() {
             d.progression = arr.length > 0 ? arr : undefined;
             changed = true;
           }
+          // skill 式注入级别：'summary' 摘要卡 / 'full' 全卡（枚举校验）
+          if (patch.contextMode === 'summary' || patch.contextMode === 'full') {
+            d.contextMode = patch.contextMode;
+            changed = true;
+          }
           if (!changed) return;
         } else if (card.kind === 'scene') {
           const name = str(patch.name);
@@ -1268,11 +1289,15 @@ async function main() {
         return;
       }
       if (msg.type === 'provider_set') {
-        // 设置某阶段的 provider/model/key（运行时生效，不写 .env）
+        // 设置某阶段的 provider/model/key/reasoning（运行时生效，不写 .env）
         const stage = String(msg.stage ?? '');
         const providerId = String(msg.provider ?? '');
         const modelId = String(msg.model ?? '');
         const apiKey = String(msg.apiKey ?? '');
+        const reasoningRaw = msg.reasoning;
+        const reasoning = reasoningRaw === 'off' || reasoningRaw === 'minimal' || reasoningRaw === 'low' || reasoningRaw === 'medium' || reasoningRaw === 'high' || reasoningRaw === 'xhigh' || reasoningRaw === 'max'
+          ? reasoningRaw
+          : undefined;
         if (!['router', 'actor', 'evaluator'].includes(stage) || !providerId || !modelId) {
           send(ws, { type: 'error', message: 'provider_set 需要 stage(router|actor|evaluator) + provider + model' });
           return;
@@ -1280,7 +1305,7 @@ async function main() {
         if (apiKey) setRuntimeKey(providerId, apiKey);
         // 写入阶段运行时配置（getStageModel 优先读它）
         const st = stage as 'router' | 'actor' | 'evaluator';
-        setStageRuntimeConfig(st, providerId, modelId);
+        setStageRuntimeConfig(st, providerId, modelId, reasoning);
         // 热切换：异步刷新目录并解析真实模型；找不到则报错（保持旧配置不动）
         const resolved = await resolveStageModelAsync(st);
         if (!resolved) {

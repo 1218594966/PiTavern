@@ -12,7 +12,7 @@
  * 摘要质量：有 evaluator apiKey 走真实模型（evaluator 模型）；faux 演示模式
  * 生成确定性占位摘要（行截断拼接），保证无 key 也能看到分层机制在跑。
  */
-import type { Models, Model, Api } from '@earendil-works/pi-ai';
+import type { Models, Model, Api, ThinkingLevel } from '@earendil-works/pi-ai';
 import type { Card, HistoryLine } from '../types.js';
 import type { CardStore } from '../db/store.js';
 import { completeWithRetry } from '../config/robust-llm.js';
@@ -59,7 +59,7 @@ export async function summarizeLayer(
   model: Model<Api>,
   store: CardStore,
   input: LayerSummaryInput,
-  opts: { apiKey?: string } = {},
+  opts: { apiKey?: string; reasoning?: ThinkingLevel | 'off' } = {},
 ): Promise<{ cardId: string; text: string; realModel: boolean } | null> {
   const { worldId, chatId, layerFrom, layerTo, lines, characterNames } = input;
   if (lines.length === 0) return null;
@@ -92,7 +92,7 @@ export async function summarizeLayer(
           },
         ],
       };
-      const call = await completeWithRetry(models, model, ctx, { apiKey: opts.apiKey, maxRetries: 0, maxTokens: 400 });
+      const call = await completeWithRetry(models, model, ctx, { apiKey: opts.apiKey, reasoning: opts.reasoning, maxRetries: 0, maxTokens: 400 });
       if (call.message) {
         const content = (call.message as { content?: unknown }).content;
         let raw = '';
