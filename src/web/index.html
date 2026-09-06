@@ -1108,9 +1108,41 @@ function renderPromptDebug() {
       body.appendChild(w);
     } else {
       const req = d.request;
+      const secKeyBase = stage + '-' + (d.preview ? 'pv' : 'real') + '-' + (Date.now() % 100000);
+      // —— 卡片流（结构化优先）：server 给的 flow 每项即一张卡（zone/title/body/kind/cardId），
+      //    角色卡正文完整、不被【】拆散；无 flow 时回退下方文本拆段逻辑 ——
+      if (d.flow && d.flow.length > 0) {
+        const flowZones = [
+          ['director', '🧭 导演指令'],
+          ['world', '🗂 世界库 · 卡片'],
+          ['story', '📜 剧情上下文'],
+        ];
+        for (const [z, zl] of flowZones) {
+          const items = d.flow.filter((f) => f.zone === z);
+          if (items.length === 0) continue;
+          const zh = document.createElement('div');
+          zh.style.cssText = 'font-size:10px;color:var(--gold-soft);font-weight:700;margin:8px 2px 4px;display:flex;align-items:center;gap:6px;';
+          zh.innerHTML = `<span style="width:3px;height:10px;background:var(--gold-soft);border-radius:1px;display:inline-block;"></span>${zl}<span style="margin-left:auto;font-weight:400;color:var(--dim2);font-size:9.5px;">${items.length} 张</span>`;
+          body.appendChild(zh);
+          items.forEach((f, fi) => {
+            const key = secKeyBase + '-flow-' + z + '-' + fi + '-' + (f.cardId || fi);
+            body.appendChild(dbgSec(key, f.title, f.body.length + ' 字符', `<pre>${esc(f.body)}</pre>`));
+          });
+        }
+        // —— Response：模型完整回复 ——
+        const hasRes = d.response != null && d.response !== '';
+        const resTitle = hasRes ? '📤 模型回复（完整）' : d.preview ? '📤 模型回复（待玩家输入后产生）' : '📤 模型回复（…等待中）';
+        const resEmpty = d.preview
+          ? '<div style="font-size:10.5px;color:var(--dim);padding:2px 0;">这是预演：路由请求已按当前世界构造，发消息后模型将在此输出抽卡 JSON。</div>'
+          : '<div style="font-size:10.5px;color:var(--dim);padding:2px 0;">回复尚未到达（流式输出中/尚未完成）</div>';
+        const resZone = document.createElement('div');
+        resZone.style.cssText = 'font-size:10px;color:var(--gold-soft);font-weight:700;margin:10px 2px 4px;display:flex;align-items:center;gap:6px;border-top:1px dashed var(--line);padding-top:6px;';
+        resZone.innerHTML = `📡 回复<span style="margin-left:auto;font-weight:400;color:var(--dim2);font-size:9.5px;">模型输出</span>`;
+        body.appendChild(resZone);
+        body.appendChild(dbgSec(stage + '-res', resTitle, hasRes ? d.response.length + ' 字符' : '', hasRes ? `<pre>${esc(d.response)}</pre>` : resEmpty));
+      } else {
       // —— Request：分层展示 system / messages / tools（content 自动按【段标题】拆分小节）——
       // 卡片流：先收集所有段（含工具归并），再按 zone（导演/世界库/剧情/回合）分组渲染。
-      const secKeyBase = stage + '-' + (d.preview ? 'pv' : 'real') + '-' + (Date.now() % 100000);
       let toolsBodyMerged = false;
       const mergeToolsInto = (title) => title === '工具' || title === 'Tools' || title === '🔧 Tools 工具' || title === '工具声明';
       const collected = []; // {title, body, key}
@@ -1169,6 +1201,7 @@ function renderPromptDebug() {
       resZone.innerHTML = `📡 回复<span style="margin-left:auto;font-weight:400;color:var(--dim2);font-size:9.5px;">模型输出</span>`;
       body.appendChild(resZone);
       body.appendChild(dbgSec(stage + '-res', resTitle, hasRes ? d.response.length + ' 字符' : '', hasRes ? `<pre>${esc(d.response)}</pre>` : resEmpty));
+      }
     }
     blk.appendChild(head);
     blk.appendChild(body);
@@ -1407,7 +1440,8 @@ function connect() {
         }
         // 路由上下文预演：未发消息也能在面板看到「路由将收到的提示词」
         if (msg.debugPreview) {
-          dbgData.router = { request: msg.debugPreview, response: null, ms: null, preview: true };
+          const pv = msg.debugPreview || {};
+          dbgData.router = { request: pv, response: null, ms: null, preview: true, flow: pv.flow || null };
           renderPromptDebug();
         }
         // 拉一次本世界卡元信息（id→名字映射，供面板/画廊）
@@ -1540,6 +1574,7 @@ function connect() {
             request: msg.detail.request || null,
             response: msg.detail.rawResponse != null ? msg.detail.rawResponse : (msg.detail.debugPrompt ? '(路由输出见下)' : null),
             ms: msg.tookMs,
+            flow: msg.detail.flow || null,
           };
           renderPromptDebug();
         }

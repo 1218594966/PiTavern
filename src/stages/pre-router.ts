@@ -105,20 +105,31 @@ const routeSchema = Type.Object(
  * 分层：System(规则/工具/输出) + 世界库(常驻全量 + 档案总览) + 剧情视图(摘要链 + 近N层全文)。
  * 非常驻卡 = 声明式档案：知道其人大概，点名（route_cards 填 id）后 assembler 才展开全文给演员。
  */
+
+/** 在场角色卡的完整正文渲染（skill 式：full 全卡 / summary 摘要） */
+export function renderCharacterCard(c: Card, userName: string): string {
+  const d = c.data as { contextMode?: string; name?: string; description?: string; personality?: string };
+  if (d.contextMode === 'summary') {
+    return `【角色（摘要）· ${d.name ?? c.id}】${d.description?.slice(0, 120) ?? ''}${d.personality ? `性格: ${d.personality.slice(0, 60)}` : ''}（完整设定可点名后由组装器展开）`;
+  }
+  return renderCard(c, { userName });
+}
+
+/** 组装 PreRouter 的 Context —— 路由 = **叙事导演**（发给模型的实际文本）。 */
 export function buildRouterContext(input: RouterInput): Context {
   const { state, currentScene, characters, memories, items, constants, userName } = input;
   const presentNames = state.presentCharacterIds
-    // 玩家卡不出现在在场名单（它是"我"；校园场景 presentCharacterIds 可能含玩家卡 id）
+    // 玩家卡不出现在在场名单（它是"我"；场景 presentCharacterIds 可能含玩家卡 id）
     .filter((id) => !String(id).startsWith('char_player_'))
     .map((id) => characters.find((c) => c.id === id)?.name ?? id)
     .join('、');
 
-  // ============ 1) System · 导演层（M16：模板可编辑，缺省用默认） ============
+  // System · 导演层
   const systemPrompt = input.routerSystemTemplate?.trim()
     ? input.routerSystemTemplate.trim()
     : DEFAULT_ROUTER_SYSTEM;
 
-  // ============ 2) 数据：常驻全量 / 档案总览 / 剧情视图 ============
+  // 剧情视图
   const summaryChain = (input.layerSummaries ?? [])
     .map((ls) => `【第 ${ls.layerFrom}-${ls.layerTo} 层回顾】${ls.detail}`)
     .join('\n\n');
@@ -129,20 +140,19 @@ export function buildRouterContext(input: RouterInput): Context {
     })
     .join('\n');
 
+  // 常驻全量（与演员同款注入）
   const constText = (constants ?? [])
     .map((c) => {
-      const icon = c.kind === 'character' ? '🧙' : c.kind === 'memory'
-        ? (({ worldview: '🌍', plot: '📖', rule: '🧭' }) as Record<string, string>)[c.mclass ?? ''] ?? '📌'
-        : c.kind === 'scene' ? '🏰' : c.kind === 'item' ? '🗡️' : '📄';
+      const icon = cardIcon(c);
       return `【${icon} ${c.name}】\n${c.text}`;
     })
     .join('\n\n');
 
+  // 档案总览（未在场角色/记忆/物品一行索引）
   const constIds = new Set((constants ?? []).map((c) => c.id));
   const constCharIndex = characters
     .filter((c) => constIds.has(c.id))
     .map((c) => `- ${c.id}: ${c.name}（📌常驻，设定已全量注入）${state.presentCharacterIds.includes(c.id) ? ' ← 已在场' : ''}`);
-  // 未在场角色：只在档案总览里给一行（在场角色已有全卡段，不重复列）
   const charFiles = characters
     .filter((c) => !constIds.has(c.id) && !state.presentCharacterIds.includes(c.id))
     .map((c) => `- ${c.id}: ${c.name}（${c.role}）← 未在场，点名后展开设定`);
@@ -151,23 +161,13 @@ export function buildRouterContext(input: RouterInput): Context {
   const itemFiles = items
     .map((i) => `- ${i.id}: ${i.name}（${i.description}${i.location === 'player' ? '，在玩家身上' : i.location === 'character' ? '，在某角色处' : ''}）`);
 
-  // ============ 3) 在场角色全卡（skill 式：上下文注入级别） ============
-  // 导演每回合直接读在场角色的完整设定卡（不再只给一行索引）；
-  // 卡 data.contextMode === 'summary' 时降级为摘要卡（省 token，标题+性格一句话）。
-  // 未在场角色仍走档案总览索引（点名后 assembler 展开给演员）。
+  // 在场角色全卡（每张卡完整渲染，卡与卡之间以空行分隔；正文里的【】是内容，不会被模型误解为段标题行）
   const presentCardText = (input.presentCards ?? [])
     .filter((c) => c.kind === 'character')
-    .map((c) => {
-      const d = c.data as { contextMode?: string; name?: string; description?: string; personality?: string };
-      if (d.contextMode === 'summary') {
-        const cv = { userName: input.userName ?? '', charName: d.name ?? c.id };
-        return `【角色（摘要）· ${d.name ?? c.id}】${d.description?.slice(0, 120) ?? ''}${d.personality ? `性格: ${d.personality.slice(0, 60)}` : ''}（完整设定可点名后由组装器展开）`;
-      }
-      return renderCard(c, { userName: input.userName ?? '' });
-    })
+    .map((c) => renderCharacterCard(c, userName ?? ''))
     .join('\n\n');
 
-  // ============ 4) user 消息 ============
+  // user 消息（给模型的真实文本：在场全卡 → 常驻 → 档案索引 → 剧情）
   return {
     systemPrompt,
     messages: [
@@ -186,7 +186,7 @@ export function buildRouterContext(input: RouterInput): Context {
             ]
             : []),
           ...(summaryChain ? ['', '【剧情回顾 · 压缩摘要链】', summaryChain] : []),
-          // 近 N 层全文（含玩家最新输入——不再单独附"玩家现在:"）
+          // 近 N 层全文（含玩家最新输入）
           ...(recentText ? ['', '【近 N 层剧情全文】', recentText] : []),
         ].join('\n'),
         timestamp: Date.now(),
@@ -200,6 +200,153 @@ export function buildRouterContext(input: RouterInput): Context {
       },
     ],
   };
+}
+
+/** 卡片图标 */
+function cardIcon(c: { kind: string; mclass?: string }): string {
+  if (c.kind === 'character') return '🧙';
+  if (c.kind === 'memory') return ({ worldview: '🌍', plot: '📖', rule: '🧭' } as Record<string, string>)[c.mclass ?? ''] ?? '📌';
+  if (c.kind === 'scene') return '🏰';
+  if (c.kind === 'item') return '🗡️';
+  return '📄';
+}
+
+/** System 提示词按【段标题】拆顶层（规则/工具/输出…） */
+function splitSystemSections(system: string): Array<{ title: string; body: string }> {
+  const lines = String(system || '').split('\n');
+  const parts: Array<{ title: string; body: string }> = [];
+  let cur: { title: string; body: string[] } | null = null;
+  for (const ln of lines) {
+    const m = ln.match(/^【([^】]{1,40})】\s*$/);
+    if (m) {
+      if (cur) parts.push({ title: cur.title, body: cur.body.join('\n').trim() });
+      cur = { title: m[1]!, body: [] };
+    } else if (cur) cur.body.push(ln);
+  }
+  if (cur) parts.push({ title: cur.title, body: cur.body.join('\n').trim() });
+  if (parts.length === 0) parts.push({ title: 'System', body: String(system || '').trim() });
+  return parts;
+}
+
+/** tools → 可读文本 */
+function toolsToText(tools: Context['tools']): string {
+  if (!tools || tools.length === 0) return '';
+  return tools
+    .map((t) => {
+      let s = `${t.name}: ${t.description ?? ''}`;
+      const params = (t as unknown as { parameters?: Record<string, unknown> }).parameters;
+      if (params && typeof params === 'object' && Object.keys(params).length > 0) {
+        s += `\n参数: ${JSON.stringify(params, null, 2)}`;
+      }
+      return s;
+    })
+    .join('\n');
+}
+
+/**
+ * 路由卡片流（调试面板专用）：与 buildRouterContext 同源的结构化卡片清单。
+ * 每项 = 一张卡 { zone, title, body, kind, cardId? }，前端按 zone 分区渲染，
+ * 角色卡一卡一张、正文不再被【】拆散。
+ */
+export function routerDebugFlow(input: RouterInput): RouterFlowItem[] {
+  const { state, currentScene, characters, memories, items, constants, userName } = input;
+  const flow: RouterFlowItem[] = [];
+  const tools: Context['tools'] = [
+    {
+      name: 'route_cards',
+      description: '输出本回合抽卡清单（选角导演的编排决定：谁在场/谁主讲/撕哪些旧事物件/换不换场）',
+      parameters: routeSchema,
+    },
+  ];
+  const systemPrompt = input.routerSystemTemplate?.trim()
+    ? input.routerSystemTemplate.trim()
+    : DEFAULT_ROUTER_SYSTEM;
+
+  // —— 导演指令：规则 / 工具（Schema 折叠附后）/ 输出 ——
+  const constIds = new Set((constants ?? []).map((c) => c.id));
+  for (const p of splitSystemSections(systemPrompt)) {
+    const isTool = p.title === '工具' || p.title === 'Tools';
+    let bodyText = p.body;
+    if (isTool) bodyText += '\n\n⬇ 请求级函数声明（Tools Schema）\n' + toolsToText(tools);
+    flow.push({ zone: 'director', title: p.title, body: bodyText || '（空）', kind: 'system' });
+  }
+
+  // —— 世界库：在场角色一角色一张卡 ——
+  const constIdsForRole = constIds;
+  const statePresent = new Set(state.presentCharacterIds);
+  for (const c of input.presentCards ?? []) {
+    if (c.kind !== 'character') continue;
+    const d = c.data as { name?: string; contextMode?: string };
+    const isConst = constIdsForRole.has(c.id);
+    const modeTag = d.contextMode === 'summary' ? '（摘要）' : isConst ? '（常驻）' : '';
+    flow.push({
+      zone: 'world',
+      title: `🧙 ${d.name ?? c.id}${modeTag}`,
+      body: renderCharacterCard(c, userName ?? ''),
+      kind: 'character',
+      cardId: c.id,
+    });
+  }
+  // 场景卡（当前场景）——D1 场景
+  if (currentScene) {
+    const sd = currentScene.data as { name?: string };
+    flow.push({
+      zone: 'world',
+      title: `🏰 场景 · ${sd.name ?? currentScene.id}`,
+      body: renderCard(currentScene, { userName: userName ?? '' }),
+      kind: 'scene',
+      cardId: currentScene.id,
+    });
+  }
+  // 常驻卡（世界观/主线/规则/常驻角色）：一卡一张
+  for (const c of constants ?? []) {
+    const icon = cardIcon(c);
+    flow.push({
+      zone: 'world',
+      title: `${icon} ${c.name}`,
+      body: c.text || '（空）',
+      kind: c.kind,
+      cardId: c.id,
+    });
+  }
+  // 档案总览索引（一行）：未在场角色 / 旧事 / 物品
+  const charFiles = characters
+    .filter((c) => !constIds.has(c.id) && !statePresent.has(c.id))
+    .map((c) => `- ${c.id}: ${c.name}（${c.role}）← 未在场，点名后展开设定`);
+  const constCharIndex = characters
+    .filter((c) => constIds.has(c.id))
+    .map((c) => `- ${c.id}: ${c.name}（📌常驻，设定已全量注入）${statePresent.has(c.id) ? ' ← 已在场' : ''}`);
+  const memoryFiles = memories
+    .map((m) => `- ${m.id}: ${m.summary}${m.keywords && m.keywords.length ? `（触发词: ${m.keywords.join('、')}）` : ''}`);
+  const itemFiles = items
+    .map((i) => `- ${i.id}: ${i.name}（${i.description}${i.location === 'player' ? '，在玩家身上' : i.location === 'character' ? '，在某角色处' : ''}）`);
+  if (constCharIndex.length || charFiles.length || memoryFiles.length || itemFiles.length) {
+    flow.push({
+      zone: 'world',
+      title: '🗂 档案总览（未在场角色/旧事/物品 · 点名后展开）',
+      body: [
+        ...(constCharIndex.length ? ['📌 常驻角色:', ...constCharIndex] : []),
+        ...(charFiles.length ? ['🧙 未在场角色:', ...charFiles] : []),
+        ...(memoryFiles.length ? ['📌 旧事/线索:', ...memoryFiles] : []),
+        ...(itemFiles.length ? ['🗡️ 物品:', ...itemFiles] : []),
+      ].join('\n') || '（空）',
+      kind: 'archive',
+    });
+  }
+
+  // —— 剧情上下文：分层摘要每条一张 + 近 N 层 ——
+  for (const ls of input.layerSummaries ?? []) {
+    flow.push({ zone: 'story', title: `💭 层回顾 ${ls.layerFrom}-${ls.layerTo}`, body: ls.detail || '（空）', kind: 'summary', cardId: `mem_l${ls.layerFrom}_${ls.layerTo}` });
+  }
+  const recentText = (input.recentLines ?? [])
+    .map((l) => {
+      const who = l.speaker === 'user' ? '玩家' : l.speaker;
+      return `${who}: ${l.text}`;
+    })
+    .join('\n');
+  if (recentText) flow.push({ zone: 'story', title: '🧵 近 N 层剧情全文', body: recentText, kind: 'history' });
+
+  return flow;
 }
 
 export function parseRouteDecision(msg: unknown): Omit<RouteDecision, 'systemCardId'> | null {
@@ -322,6 +469,15 @@ export function sanitizeRouteDecision(raw: Omit<RouteDecision, 'systemCardId'>, 
   };
 }
 
+export interface RouterFlowItem {
+  /** 卡片流分区：director(导演指令) / world(世界库) / story(剧情上下文) */
+  zone: 'director' | 'world' | 'story';
+  title: string;
+  body: string;
+  kind: string;
+  cardId?: string;
+}
+
 export interface PreRouterResult {
   decision: RouteDecision;
   /** 该次调用的模型说明（真实模型 or faux） */
@@ -342,6 +498,8 @@ export interface PreRouterResult {
   rawResponse?: string;
   /** 调试：请求分层（system/消息/工具） */
   request?: { system: string; messages: Array<{ role: string; content: string }>; tools: string };
+  /** 调试：结构化卡片流（与请求同源；供前端卡片式渲染，不拆角色卡正文） */
+  flow?: RouterFlowItem[];
 }
 
 /** 运行阶段 1：await 等它出结果，产出 RouteDecision 交给组装器 */
@@ -393,5 +551,6 @@ export async function preRouter(
     debugPrompt: ctxToDebugPrompt(ctx),
     rawResponse: rawText,
     request: ctxToStructured(ctx),
+    flow: routerDebugFlow(input),
   };
 }

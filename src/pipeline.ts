@@ -331,6 +331,7 @@ async function runTurnInner(cfg: PipelineConfig, index: WorldIndex, userMessage:
       debugPrompt: routeResult.debugPrompt,
       rawResponse: routeResult.rawResponse,
       request: routeResult.request,
+      flow: routeResult.flow,
     },
     tookMs: routerMs,
   });

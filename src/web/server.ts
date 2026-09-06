@@ -37,7 +37,7 @@ import {
   ensureCustomProvider,
 } from '../config/provider-registry.js';
 import { seedDemoWorld, loadWorldIndex as loadWorldIndexFromStore, runTurn } from '../pipeline.js';
-import { buildRouterContext } from '../stages/pre-router.js';
+import { buildRouterContext, routerDebugFlow } from '../stages/pre-router.js';
 import { ctxToStructured } from '../utils/prompt-debug.js';
 import type { PipelineStageEvent } from '../pipeline.js';
 import { importCards } from '../cards/importer.js';
@@ -911,7 +911,7 @@ async function main() {
           const wsStateNow = await store.getWorldState(wid);
           // 未发消息也要能看路由上下文：按当前世界指针预演一版「路由将看到的提示词」
           // （玩家消息为空占位，标记 preview；发回合后被真实数据覆盖）
-          let debugPreview: { system: string; messages: Array<{ role: string; content: string }>; tools: string } | null = null;
+          let debugPreview: { system: string; messages: Array<{ role: string; content: string }>; tools: string; flow?: unknown[] } | null = null;
           try {
             const index = await loadWorldIndexFromStore(store, wid, { chatId: chatId ?? undefined });
             const state = chat?.state ?? wsStateNow;
@@ -920,7 +920,7 @@ async function main() {
                 | (Card & { data: SceneCardData })
                 | undefined;
               if (currentScene) {
-                const ctx = buildRouterContext({
+                const routerInput = {
                   worldId: wid,
                   state,
                   userMessage: '（等待你输入…）',
@@ -949,8 +949,12 @@ async function main() {
                         text: (d.detail ?? d.description ?? '').trim(),
                       };
                     }),
-                });
-                debugPreview = ctxToStructured(ctx);
+                };
+                const ctx = buildRouterContext(routerInput);
+                debugPreview = {
+                  ...ctxToStructured(ctx),
+                  flow: routerDebugFlow(routerInput),
+                };
               }
             }
           } catch {
