@@ -4,3 +4,9 @@ dist/
 .npmhome/
 .npmcache/
 *.log
+
+# 角色卡素材（本地个人内容，不纳入版本控制）
+# - Card/：PNG 嵌卡种子（如 校园.png），运行时本地读取，不入库
+# - Prompt/：第三方角色卡 JSON（如 Izumi_1th_Anniv.json）
+Card/
+Prompt/
