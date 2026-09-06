@@ -1,0 +1,2396 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PiTavern · 角色卡引擎</title>
+<style>
+  /* ================= PiTavern · 卡牌游戏质感主题 ================= */
+  :root {
+    --bg: #0b0a08; --bg2: #12100c; --panel: #171410; --panel2: #1e1a13;
+    --line: #33291a; --line-gold: #6b5730; --text: #ece3cd; --dim: #9a8e74;
+    --gold: #d4af37; --gold-soft: #c9a25e; --red: #c96a5a; --green: #8fbc6a;
+    --blue: #7fa3c9; --purple: #a98fc9;
+    --card-h: 210; --card-s: 30%; --card-l: 12%;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  ::selection { background: rgba(212,175,55,.3); }
+
+  /* —— 背景：暗色酒馆 + 暖光柱 + 颗粒 —— */
+  body {
+    background:
+      radial-gradient(1100px 520px at 22% -8%, rgba(212,175,55,.07), transparent 60%),
+      radial-gradient(900px 600px at 90% 108%, rgba(120,90,40,.10), transparent 55%),
+      radial-gradient(400px 260px at 75% 15%, rgba(160,120,60,.05), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    font-family: "PingFang SC", "Microsoft YaHei", "Noto Serif SC", serif;
+    height: 100vh; display: flex; flex-direction: column;
+    position: relative;
+    text-shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+  /* 细颗粒纹理（发光卡片更有纸面感） */
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image: radial-gradient(rgba(255,255,255,.025) 1px, transparent 1px);
+    background-size: 3px 3px;
+    opacity: .5;
+  }
+
+  /* —— 顶栏：皮面铭牌 —— */
+  header {
+    padding: 10px 20px; border-bottom: 1px solid var(--line-gold);
+    display: flex; align-items: center; gap: 14px;
+    background: linear-gradient(180deg, rgba(212,175,55,.10), transparent 70%), rgba(20,17,12,.85);
+    backdrop-filter: blur(4px);
+    box-shadow: 0 2px 18px rgba(0,0,0,.5);
+    position: relative; z-index: 10;
+  }
+  header h1 {
+    font-size: 18px; color: var(--gold);
+    letter-spacing: 3px; font-weight: 700;
+    text-shadow: 0 0 14px rgba(212,175,55,.45), 0 1px 2px #000;
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  header h1::after { content: ""; display: block; height: 2px; width: 100%;
+    background: linear-gradient(90deg, transparent, var(--gold), transparent);
+    margin-top: 3px; border-radius: 2px; opacity: .6; }
+  header .sub { color: var(--dim); font-size: 12px; font-style: italic; }
+  header .model-tag { margin-left: auto; font-size: 11px; color: var(--dim); display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  header .model-tag b { color: var(--gold-soft); font-weight: 600; }
+  header .model-tag span { background: rgba(0,0,0,.25); border: 1px solid #2a2318; border-radius: 10px; padding: 1px 8px; }
+
+  main { flex: 1; display: flex; min-height: 0; position: relative; z-index: 1; }
+
+  /* —— 左：对话区（像翻开的一页羊皮纸） —— */
+  #chat { flex: 1; display: flex; flex-direction: column; min-width: 0;
+    background: radial-gradient(700px 400px at 50% 0%, rgba(120,95,45,.05), transparent 60%); }
+  #log { flex: 1; overflow-y: auto; padding: 20px 22px; display: flex; flex-direction: column; gap: 16px; }
+
+  /* 消息气泡——卡片质感：双层描边 + 顶部高光 + 底部投影 */
+  .msg {
+    max-width: 80%; padding: 11px 16px; border-radius: 12px;
+    line-height: 1.7; white-space: pre-wrap; font-size: 14px;
+    position: relative;
+    box-shadow: 0 3px 12px rgba(0,0,0,.45);
+    animation: msgIn .32s cubic-bezier(.2,.9,.3,1.2) both;
+    transform-origin: left bottom;
+  }
+  @keyframes msgIn { from { opacity: 0; transform: translateY(8px) scale(.96); } }
+  .msg::before { content: ""; position: absolute; top: 0; left: 10px; right: 10px; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255,245,200,.35), transparent); border-radius: 2px; }
+  .msg.user { align-self: flex-end; background: linear-gradient(165deg, #32291a, #241d11);
+    border: 1px solid #5c4a24; color: #f4ecd6; transform-origin: right bottom; }
+  .msg.user::after { content: ""; position: absolute; right: -6px; bottom: 10px; width: 0; height: 0;
+    border-left: 8px solid #2a2213; border-top: 6px solid transparent; border-bottom: 6px solid transparent; }
+  .msg.npc { align-self: flex-start;
+    background: linear-gradient(165deg, rgba(212,175,55,.09), transparent 30%), linear-gradient(200deg, #201b13, #171410);
+    border: 1px solid #4a3d26; box-shadow: 0 3px 14px rgba(0,0,0,.5), inset 0 0 22px rgba(212,175,55,.03); }
+  .msg.npc .who { color: var(--gold); }
+  .msg.ooc { align-self: center; background: transparent; border: 1px dashed #4a3d26; color: var(--dim);
+    font-size: 12px; font-style: italic; padding: 4px 16px; border-radius: 16px; text-shadow: none; }
+  .msg.ooc::before { content: '（OOC）'; font-style: normal; }
+  .msg .who { font-size: 11px; color: var(--gold-soft); margin-bottom: 4px; font-weight: 600; letter-spacing: .5px; }
+  .msg .who-user { color: var(--blue); text-align: right; }
+  .msg.msg-excluded { opacity: .5; filter: grayscale(.8); }
+  .msg.msg-excluded .body { text-decoration: line-through; text-decoration-color: rgba(255,255,255,.2); }
+  .msg.msg-excluded::after { content: '出戏（不进上下文）'; font-size: 10px; color: var(--dim); align-self: flex-start; }
+  .msg .cursor { display: inline-block; width: 8px; height: 16px; background: var(--gold);
+    animation: blink .7s infinite; vertical-align: -3px; margin-left: 2px;
+    box-shadow: 0 0 6px rgba(212,175,55,.8); border-radius: 1px; }
+  @keyframes blink { 50% { opacity: .1; } }
+
+  /* 操作条——像卡片上的小金属钮 */
+  .msg-ops { position: absolute; top: -15px; right: 6px; display: none; gap: 4px; z-index: 6; }
+  .msg:hover .msg-ops, .msg-ops:hover, .msg:focus-within .msg-ops { display: flex; }
+  .msg-ops button {
+    background: linear-gradient(180deg, #26201438, #191510); border: 1px solid #4a3d26;
+    color: var(--dim); font-size: 10px; padding: 1px 9px; border-radius: 9px; cursor: pointer; line-height: 17px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.5); transition: all .15s;
+  }
+  .msg-ops button:hover { color: var(--gold); border-color: var(--gold); transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0,0,0,.6), 0 0 8px rgba(212,175,55,.25); }
+
+  /* 滚动条 */
+  #log::-webkit-scrollbar, #side::-webkit-scrollbar, #gallery-grid::-webkit-scrollbar, #world-cards::-webkit-scrollbar, #chat-tabs::-webkit-scrollbar, #pdb-copyarea::-webkit-scrollbar { width: 8px; height: 8px; }
+  #log::-webkit-scrollbar-thumb, #side::-webkit-scrollbar-thumb, #gallery-grid::-webkit-scrollbar-thumb, #world-cards::-webkit-scrollbar-thumb { background: linear-gradient(180deg, #4a3a1e, #33291a); border-radius: 4px; border: 1px solid #1c1710; }
+  #log::-webkit-scrollbar-thumb:hover { background: #6b5730; }
+  #log::-webkit-scrollbar-track, #side::-webkit-scrollbar-track { background: transparent; }
+
+  /* 结算摘要卡：羊皮卷 */
+  .settle-card { align-self: center; max-width: 92%; font-size: 11.5px; color: var(--dim);
+    background: linear-gradient(180deg, #1a160e, #14110b); border: 1px solid #57492c;
+    border-radius: 6px 6px 6px 6px; padding: 7px 14px; line-height: 1.8; margin: 4px 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,.4); position: relative; }
+  .settle-card::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: linear-gradient(90deg, #6b5730, #d4af37, #6b5730); opacity: .6; border-radius: 6px 6px 0 0; }
+  .settle-card b { color: var(--gold); font-weight: 600; }
+  .settle-card .up { color: var(--green); } .settle-card .down { color: var(--red); }
+  .settle-card .thought { color: #b3a077; font-style: italic; }
+  .sys-line { align-self: center; color: var(--dim); font-size: 12px; background: rgba(0,0,0,.3);
+    border: 1px solid #2c2518; padding: 3px 16px; border-radius: 18px; }
+  .think-line { align-self: center; color: var(--gold); font-size: 12px; background: rgba(212,175,55,.07);
+    border: 1px dashed #6b5730; padding: 5px 18px; border-radius: 18px; animation: thinkPulse 1.8s ease-in-out infinite; }
+  @keyframes thinkPulse { 0%,100% { opacity: .55; text-shadow: none; } 50% { opacity: 1; text-shadow: 0 0 8px rgba(212,175,55,.5); } }
+
+  /* 输入区：嵌金输入框 */
+  #inputbar { display: flex; flex-wrap: wrap; gap: 10px; padding: 14px 18px; border-top: 1px solid var(--line-gold);
+    background: linear-gradient(0deg, rgba(212,175,55,.05), transparent 80%), rgba(18,15,11,.92);
+    backdrop-filter: blur(3px); position: relative; z-index: 5; }
+  #inputbar input { flex: 1; min-width: 0; background: rgba(0,0,0,.4); border: 1px solid #3d3320; color: var(--text);
+    padding: 11px 16px; border-radius: 10px; font-size: 14px; outline: none; transition: border-color .2s, box-shadow .2s; }
+  #inputbar > div { flex: 1; min-width: 0; }
+  #inputbar input:focus { border-color: var(--gold); box-shadow: 0 0 0 1px rgba(212,175,55,.25), 0 0 14px rgba(212,175,55,.12); }
+  #inputbar input::placeholder { color: #6e6350; }
+  #inputbar button { background: linear-gradient(180deg, #e8c65a, #c9a25e); color: #171208; border: none;
+    border-radius: 10px; padding: 10px 26px; font-size: 14px; font-weight: 800; cursor: pointer; letter-spacing: 1px;
+    box-shadow: 0 3px 0 #8a6d2f, 0 4px 12px rgba(0,0,0,.4); transition: all .15s; }
+  #inputbar button:hover { transform: translateY(-1px); box-shadow: 0 4px 0 #8a6d2f, 0 6px 16px rgba(212,175,55,.25);
+    filter: brightness(1.08); }
+  #inputbar button:active { transform: translateY(2px); box-shadow: 0 1px 0 #8a6d2f; }
+  #inputbar button:disabled { opacity: .4; transform: none; box-shadow: none; }
+
+  /* —— 右侧：像一排「卡盒」 —— */
+  #side { width: 350px; border-left: 1px solid var(--line-gold); overflow-y: auto; padding: 14px;
+    display: flex; flex-direction: column; gap: 12px;
+    background: linear-gradient(180deg, rgba(212,175,55,.04), transparent 30%), rgba(16,14,10,.6);
+    backdrop-filter: blur(2px); }
+  .card { background: linear-gradient(180deg, #1c1812, #16130e);
+    border: 1px solid #33291a; border-radius: 12px; padding: 12px 14px; position: relative;
+    box-shadow: 0 2px 8px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,240,200,.05); }
+  .card::before { content: ""; position: absolute; inset: 0; border-radius: 12px; padding: 1px;
+    background: linear-gradient(160deg, rgba(212,175,55,.22), transparent 30%, transparent 70%, rgba(212,175,55,.08));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; }
+  .card h3 { font-size: 11.5px; color: var(--gold-soft); margin-bottom: 9px; letter-spacing: 2px;
+    text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
+  .card h3::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, rgba(212,175,55,.4), transparent); }
+  .card .kv { font-size: 12px; color: var(--dim); display: grid; grid-template-columns: 70px 1fr; gap: 3px 8px; }
+  .card .kv b { color: var(--text); font-weight: 500; text-align: left; }
+  .stage { display: flex; align-items: center; gap: 9px; font-size: 12px; padding: 5px 0; color: var(--dim); }
+  .stage .dot { width: 9px; height: 9px; border-radius: 50%; background: #3a342a; flex-shrink: 0;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,.6); }
+  .stage.running .dot, .stage.start .dot { background: radial-gradient(circle at 35% 30%, #ffe9a0, var(--gold));
+    animation: pulse 1s infinite; box-shadow: 0 0 8px rgba(212,175,55,.7); }
+  .stage.done .dot { background: radial-gradient(circle at 35% 30%, #c8e8a8, var(--green)); box-shadow: 0 0 6px rgba(143,188,106,.5); }
+  .stage.error .dot { background: radial-gradient(circle at 35% 30%, #f0a090, var(--red)); box-shadow: 0 0 6px rgba(201,106,90,.5); }
+  @keyframes pulse { 50% { opacity: .3; } }
+  .stage .t { flex: 1; }
+  .stage .ms { color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .stage.done .t { color: var(--green); }
+  .stage.running .t, .stage.start .t { color: var(--gold); }
+
+  /* 会话 tab：小牌签 */
+  #chatbar { display: flex; align-items: center; gap: 8px; padding: 7px 12px; flex-wrap: wrap;
+    background: linear-gradient(180deg, rgba(212,175,55,.06), transparent), rgba(20,17,12,.9);
+    border-bottom: 1px solid var(--line-gold); }
+  #chat-tabs { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; min-width: 0; }
+  #chat-tabs .ctab { display: inline-flex; align-items: center; gap: 5px; background: rgba(0,0,0,.3);
+    color: var(--dim); border: 1px solid #33291a; border-radius: 10px; padding: 3px 12px; font-size: 12px;
+    cursor: pointer; max-width: 190px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    transition: all .18s; }
+  #chat-tabs .ctab:hover { color: var(--text); border-color: var(--gold-soft); transform: translateY(-1px); }
+  #chat-tabs .ctab.active { background: linear-gradient(180deg, #3d3219, #2a2213); color: var(--gold);
+    border-color: var(--line-gold); box-shadow: 0 0 10px rgba(212,175,55,.15); }
+  #chatbar button { background: rgba(0,0,0,.3); color: var(--gold-soft); border: 1px solid #33291a; border-radius: 10px;
+    padding: 3px 12px; font-size: 12px; cursor: pointer; transition: all .18s; }
+  #chatbar button:hover { background: rgba(212,175,55,.12); border-color: var(--gold-soft); transform: translateY(-1px); }
+  #chatbar #chat-del { color: #d0877a; }
+
+  /* 世界库：仓库卡（发光选中 + 悬浮抬升） */
+  #world-cards .wcard { display: flex; align-items: center; gap: 9px; background: linear-gradient(180deg, rgba(212,175,55,.05), transparent), rgba(0,0,0,.25);
+    border: 1px solid #33291a; border-radius: 10px; padding: 7px 10px; cursor: pointer; font-size: 12px; color: var(--dim);
+    transition: all .2s; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+  #world-cards .wcard:hover { border-color: var(--gold-soft); color: var(--text); transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0,0,0,.45), 0 0 10px rgba(212,175,55,.1); }
+  #world-cards .wcard.active { background: linear-gradient(180deg, rgba(212,175,55,.13), rgba(30,25,14,.9)); border-color: var(--line-gold);
+    color: var(--gold); box-shadow: 0 0 12px rgba(212,175,55,.2), inset 0 1px 0 rgba(255,240,200,.1); }
+  #world-cards .wcard .wname { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; display: flex; align-items: center; gap: 5px; }
+  #world-cards .wcard .wmeta { font-size: 10px; color: var(--dim); }
+  #world-cards .wcard .wgreet { font-size: 10px; color: var(--dim); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 2px; white-space: normal; opacity: .85; font-style: italic; }
+  #world-cards .wcard.active .wgreet { color: var(--gold-soft); }
+  #world-cards .wcard .wdemo { font-size: 9px; color: var(--dim); border: 1px solid #3d3320; border-radius: 8px; padding: 0 5px; flex-shrink: 0; }
+  #world-cards .wcard .wdot { width: 8px; height: 8px; border-radius: 50%; background: #55462a; flex-shrink: 0; }
+  #world-cards .wcard.active .wdot { background: var(--gold); box-shadow: 0 0 8px var(--gold); }
+  #world-cards .wcard .wav { width: 34px; height: 34px; border-radius: 8px; background: rgba(0,0,0,.35); overflow: hidden;
+    display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0;
+    border: 1px solid #4a3d26; box-shadow: inset 0 0 8px rgba(0,0,0,.5); }
+  #world-cards .wcard .wav img { width: 100%; height: 100%; object-fit: cover; }
+  #world-cards .wcard.active .wav { border-color: var(--gold-soft); }
+
+  /* —— 通用按钮金属感 —— */
+  button { font-family: inherit; transition: filter .15s, border-color .15s, transform .15s, box-shadow .15s; }
+  button:hover { filter: brightness(1.12); }
+  button:disabled { opacity: .45; cursor: not-allowed; transform: none !important; }
+  input:focus, textarea:focus, select:focus { outline: 1px solid var(--gold); outline-offset: -1px; }
+
+  /* —— 拆卡动画：卡片飞出（强化质感） —— */
+  @keyframes sourcePop {
+    0% { transform: scale(1); opacity: 1; filter: drop-shadow(0 0 18px rgba(212,175,55,.6)); }
+    30% { transform: scale(1.1); }
+    100% { transform: scale(.25); opacity: 0; }
+  }
+  @keyframes cardFlyIn {
+    0% { transform: scale(.2) rotate(-6deg) translate(0,10px); opacity: 0; }
+    55% { opacity: 1; }
+    100% { transform: scale(1) rotate(0) translate(0,0); opacity: 1; }
+  }
+  @keyframes burstPulse {
+    0% { box-shadow: 0 0 0 0 rgba(212,175,55,.55); }
+    100% { box-shadow: 0 0 0 16px rgba(212,175,55,0); }
+  }
+  .split-source {
+    position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+    background: linear-gradient(135deg, #2e2715, #1c1710);
+    border: 1px solid #6b5730; border-radius: 8px;
+    padding: 10px 18px; font-size: 13px; color: var(--gold);
+    animation: sourcePop .9s ease-in forwards, burstPulse .9s ease-out;
+    z-index: 5; white-space: nowrap;
+  }
+  .mini-card {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: #1f1a10; border: 1px solid var(--line); border-radius: 6px;
+    padding: 4px 8px; font-size: 10.5px; color: var(--dim);
+    animation: cardFlyIn .55s cubic-bezier(.2, .9, .3, 1.3) both;
+    cursor: default;
+  }
+  .mini-card .ic { font-size: 12px; }
+    .mini-card:hover { border-color: var(--gold); color: var(--gold); }
+
+  /* ============ M7 UI 基建：toast / modal / 按钮态 ============ */
+  #toast-root { position: fixed; right: 14px; bottom: 14px; display: flex; flex-direction: column; gap: 8px; z-index: 999; pointer-events: none; }
+  .toast { min-width: 200px; max-width: 340px; background: #1d1912; border: 1px solid var(--line); border-left: 3px solid var(--gold); color: var(--text); padding: 9px 14px; border-radius: 8px; font-size: 12.5px; box-shadow: 0 4px 18px rgba(0,0,0,.45); animation: toastIn .25s ease both; pointer-events: auto; line-height: 1.5; }
+  .toast.ok { border-left-color: var(--green); }
+  .toast.err { border-left-color: var(--red); }
+  .toast.out { animation: toastOut .3s ease both; }
+  @keyframes toastIn { from { transform: translateY(12px); opacity: 0; } }
+  @keyframes toastOut { to { transform: translateX(20px); opacity: 0; } }
+
+  #modal-root { position: fixed; inset: 0; z-index: 900; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.55); backdrop-filter: blur(2px); }
+  #modal-root.show { display: flex; }
+  .ui-modal { width: min(440px, 92vw); max-height: 82vh; overflow-y: auto; background: var(--panel); border: 1px solid #4a3f2a; border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,.6); display: flex; flex-direction: column; animation: toastIn .2s ease both; }
+  .ui-modal header { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 14px; color: var(--gold); font-weight: 600; }
+  .ui-modal header .x { margin-left: auto; background: none; border: none; color: var(--dim); font-size: 16px; cursor: pointer; padding: 0 4px; }
+  .ui-modal header .x:hover { color: var(--text); }
+  .ui-modal .mbody { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; font-size: 13px; line-height: 1.6; }
+  .ui-modal .mbody label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--dim); }
+  .ui-modal .mbody input, .ui-modal .mbody textarea { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; font-size: 13px; font-family: inherit; resize: vertical; }
+  .ui-modal .mbody input:focus, .ui-modal .mbody textarea:focus { outline: none; border-color: var(--gold); }
+  .ui-modal footer { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--line); }
+  .ui-modal footer .btn { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 14px; font-size: 12.5px; cursor: pointer; }
+  .ui-modal footer .btn:hover { border-color: var(--gold); color: var(--gold); }
+  .ui-modal footer .btn.primary { background: var(--gold); border: none; color: #14120c; font-weight: 700; }
+  .ui-modal footer .btn.danger { background: #4a2222; border-color: #7a3a3a; color: #ff9d9d; }
+  .ui-modal footer .btn.danger:hover { background: #5c2626; }
+  .ui-modal .hint { font-size: 11px; color: var(--dim); }
+
+  /* slash 提示浮层 */
+  #slash-pop { position: absolute; bottom: calc(100% + 6px); left: 0; display: none; flex-direction: column; background: #1d1912; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; min-width: 240px; z-index: 50; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
+  #slash-pop.show { display: flex; }
+  #slash-pop .si { padding: 6px 10px; font-size: 12px; color: var(--dim); cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
+  #slash-pop .si b { color: var(--gold); font-family: ui-monospace, monospace; min-width: 52px; }
+  #slash-pop .si:hover, #slash-pop .si.sel { background: #2a2417; color: var(--text); }
+  #slash-pop .sh { padding: 5px 10px; font-size: 10px; color: var(--dim2, #6b6250); letter-spacing: .5px; border-bottom: 1px solid #241f15; }
+
+  /* 调试面板分层块 */
+  .dbg-block { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #14110c; }
+  .dbg-block > .dbg-head { display: flex; align-items: center; gap: 8px; padding: 5px 9px; background: #1c1812; cursor: pointer; font-size: 11px; color: var(--gold); font-weight: 600; user-select: none; }
+  .dbg-block > .dbg-head .arr { display: inline-block; transition: transform .15s; font-size: 9px; color: var(--dim); }
+  .dbg-block.open > .dbg-head .arr { transform: rotate(90deg); }
+  .dbg-block > .dbg-head .st { color: var(--dim); font-weight: 400; font-size: 10px; }
+  .dbg-block > .dbg-head .tt { color: var(--dim); font-weight: 400; font-size: 10px; margin-left: auto; }
+  .dbg-block > .dbg-body { display: none; flex-direction: column; }
+  .dbg-block.open > .dbg-body { display: flex; }
+  .dbg-sec { border-top: 1px dashed #2c2518; }
+  .dbg-sec > .dbg-sec-head { display: flex; align-items: center; gap: 6px; padding: 4px 10px; cursor: pointer; font-size: 10.5px; color: var(--text); font-weight: 600; }
+  .dbg-sec > .dbg-sec-head .arr { display: inline-block; transition: transform .15s; font-size: 9px; color: var(--dim); }
+  .dbg-sec.open > .dbg-sec-head .arr { transform: rotate(90deg); }
+  .dbg-sec > .dbg-sec-head .tk { margin-left: auto; color: var(--dim); font-size: 9px; font-weight: 400; }
+  .dbg-sec > .dbg-sec-body { display: none; padding: 0 10px 8px; }
+  .dbg-sec.open > .dbg-sec-body { display: block; }
+  .dbg-sec pre, .dbg-block pre { white-space: pre-wrap; word-break: break-all; background: #0f0d09; border: 1px solid #262016; border-radius: 6px; padding: 7px 9px; font-size: 10px; line-height: 1.55; color: var(--text); margin: 0; max-height: 300px; overflow-y: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .dbg-sec .rq-label { font-size: 9.5px; color: var(--dim); margin-bottom: 3px; }
+  .pdb { background: var(--panel2); color: var(--dim); border: 1px solid var(--line); border-radius: 10px; padding: 1px 10px; font-size: 10.5px; cursor: pointer; }
+  .pdb:hover { color: var(--gold); border-color: var(--gold); }
+  .pdb.on { background: #2e2616; color: var(--gold); border-color: #6b5730; }
+  button { transition: filter .15s, border-color .15s; }
+  button:hover { filter: brightness(1.15); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  input:focus, textarea:focus, select:focus { outline: 1px solid var(--gold); outline-offset: -1px; }
+
+  /* ===== M7+ 组件：卡牌质感覆盖层 ===== */
+  .toast { background: linear-gradient(180deg, #241e14, #191510); border: 1px solid #4a3d26;
+    border-left: 3px solid var(--gold); box-shadow: 0 6px 22px rgba(0,0,0,.6), 0 0 14px rgba(212,175,55,.08);
+    border-radius: 10px; }
+  .toast.ok { border-left-color: var(--green); }
+  .toast.err { border-left-color: var(--red); }
+  .ui-modal { background: linear-gradient(180deg, #1d1810, #15120c);
+    border: 1px solid #6b5730; box-shadow: 0 18px 60px rgba(0,0,0,.75), 0 0 30px rgba(212,175,55,.06); }
+  .ui-modal header { border-bottom: 1px solid #33291a; color: var(--gold); }
+  .ui-modal .mbody input, .ui-modal .mbody textarea { background: rgba(0,0,0,.35); border: 1px solid #3d3320; color: var(--text); }
+  .ui-modal .mbody input:focus, .ui-modal .mbody textarea:focus { border-color: var(--gold); box-shadow: 0 0 0 1px rgba(212,175,55,.2); }
+  .ui-modal footer .btn { background: rgba(0,0,0,.3); border: 1px solid #3d3320; color: var(--text); }
+  .ui-modal footer .btn:hover { border-color: var(--gold); color: var(--gold); }
+  .ui-modal footer .btn.primary { background: linear-gradient(180deg, #e8c65a, #c9a25e); border: none; color: #171208; font-weight: 800; box-shadow: 0 2px 0 #8a6d2f; }
+  .ui-modal footer .btn.danger { background: #3a1d18; border-color: #7a3a30; color: #ffb0a0; }
+  .ui-modal footer .btn.danger:hover { background: #4a241d; }
+  #settings-modal { background: linear-gradient(180deg, #1d1810, #15120c); border: 1px solid #6b5730;
+    box-shadow: 0 18px 60px rgba(0,0,0,.75), 0 0 30px rgba(212,175,55,.06); }
+  #settings-modal input, #settings-modal select, #settings-modal textarea { background: rgba(0,0,0,.35); border: 1px solid #3d3320; color: var(--text); }
+  #settings-modal select { background: rgba(0,0,0,.4); }
+  #settings-modal option { background: #1d1810; }
+  #slash-pop { background: linear-gradient(180deg, #221c12, #17130c); border: 1px solid #4a3d26; box-shadow: 0 10px 30px rgba(0,0,0,.6); }
+  #slash-pop .si b { color: var(--gold); }
+  #slash-pop .si:hover, #slash-pop .si.sel { background: rgba(212,175,55,.1); color: var(--text); }
+  .dbg-block { border: 1px solid #33291a; background: rgba(0,0,0,.25); }
+  .dbg-block > .dbg-head { background: linear-gradient(180deg, rgba(212,175,55,.1), rgba(0,0,0,.2)); }
+  .dbg-sec pre, .dbg-block pre { background: #0d0b07; border: 1px solid #2c2518; }
+  .mini-card { background: linear-gradient(180deg, #262014, #1a1610); border: 1px solid #6b5730; }
+  #gallery-drawer { background: linear-gradient(180deg, #17130d, #12100a); border-left: 1px solid var(--line-gold); }
+  #gallery-grid > div > div > b, #gallery-grid b { }
+
+  #split-stage { }
+  .think-line, .sys-line { box-shadow: 0 2px 8px rgba(0,0,0,.3); }
+
+  /* ===== 卡牌氛围动效增强 ===== */
+  /* 标题流光扫过 */
+  header h1 { position: relative; overflow: hidden; }
+  header h1::before { content: ""; position: absolute; top: 0; bottom: 0; width: 40%;
+    left: -60%; background: linear-gradient(105deg, transparent, rgba(255,236,170,.14), transparent);
+    animation: sheen 5.5s ease-in-out infinite; }
+  @keyframes sheen { 0%, 55% { left: -60%; } 80%, 100% { left: 130%; } }
+  /* 选中仓库卡呼吸光晕 */
+  #world-cards .wcard.active { animation: activeGlow 2.6s ease-in-out infinite; }
+  @keyframes activeGlow { 0%,100% { box-shadow: 0 0 10px rgba(212,175,55,.14); } 50% { box-shadow: 0 0 18px rgba(212,175,55,.32); } }
+  /* NPC 新消息入场的轻微"翻开"感 —— 由 msgIn 承担 */
+  /* 阶段圆点亮起时加扩散环 */
+  .stage.start .dot::after { content: ""; position: absolute; inset: -4px; border-radius: 50%;
+    border: 1px solid rgba(212,175,55,.6); animation: ripple .9s ease-out infinite; }
+  .stage .dot { position: relative; }
+  @keyframes ripple { 0% { transform: scale(.5); opacity: 1; } 100% { transform: scale(1.6); opacity: 0; } }
+  /* 结算摘要卡微浮现 */
+  .settle-card { animation: settleIn .5s cubic-bezier(.2,.9,.3,1.15) both; }
+  @keyframes settleIn { from { opacity: 0; transform: translateY(10px) scale(.96); } }
+  /* 画廊分节标题装饰 */
+  #gallery-grid b { letter-spacing: 1px; }
+  /* toast 进出自带滑入 —— 已有 toastIn */
+  /* 输入框发送按钮流光点缀 */
+  #inputbar button { position: relative; overflow: hidden; }
+  #inputbar button::after { content: ""; position: absolute; top: 0; bottom: 0; width: 30%; left: -40%;
+    background: linear-gradient(105deg, transparent, rgba(255,255,255,.35), transparent); animation: btnSheen 3.2s ease-in-out infinite; }
+  @keyframes btnSheen { 0%, 70% { left: -40%; } 95%, 100% { left: 130%; } }
+
+  /* ===== M13 牛皮纸复古主题（覆盖层） ===== */
+  :root {
+    --bg: #e7dabf; --panel: #efe3c8; --panel2: #f6ecd6; --line: #c3a878; --line-gold: #a5824a;
+    --text: #3a2d1a; --dim: #85704c; --gold: #96691d; --gold-soft: #a5712a; --red: #a3482e;
+    --green: #5f8048; --blue: #4a6f8f;
+  }
+  body {
+    background:
+      radial-gradient(1200px 700px at 50% -10%, rgba(255,240,200,.55), transparent 60%),
+      radial-gradient(900px 500px at 90% 110%, rgba(160,120,70,.12), transparent 55%),
+      #d9c9a3;
+    color: var(--text);
+    text-shadow: none;
+  }
+  body::before { background-image: radial-gradient(rgba(110,84,44,.06) 1px, transparent 1px); opacity: .7; }
+  header { background: linear-gradient(180deg, #55442a, #3e3119); border-bottom-color: #2c2312;
+    box-shadow: 0 3px 14px rgba(60,45,20,.35); }
+  header h1 { color: #f0d68a; text-shadow: 0 1px 3px rgba(0,0,0,.5); }
+  header h1::after { background: linear-gradient(90deg, transparent, #e6c46a, transparent); }
+  header .sub { color: #c9b98d; }
+  header .model-tag b { color: #f0d68a; }
+  #chat { background: radial-gradient(800px 500px at 50% 0%, rgba(255,250,225,.5), transparent 70%); }
+  #log { scrollbar-color: #b39a6b transparent; }
+  .msg { box-shadow: 0 2px 6px rgba(90,70,35,.28); }
+  .msg.npc { background: linear-gradient(165deg, rgba(214,178,110,.12), transparent 40%), #f7eed8;
+    border: 1px solid #c8ae7c; color: #42331c; }
+  .msg.npc .who { color: #96691d; }
+  .msg.npc::before { background: linear-gradient(90deg, transparent, rgba(150,105,29,.25), transparent); }
+  .msg.user { background: linear-gradient(165deg, #e8cf9a, #ddbe7f); border: 1px solid #b9985a; color: #3a2c15; }
+  .msg.user::after { border-left-color: #e2c98f; }
+  .msg.ooc { border-color: #c3a878; color: #85704c; }
+  .msg .cursor { background: #96691d; box-shadow: 0 0 5px rgba(150,105,29,.7); }
+  .settle-card { background: linear-gradient(180deg, #f4e9cd, #ead9b4); border-color: #b39a6b; color: #6d5a38; }
+  .sys-line { background: rgba(240,230,200,.6); border-color: #c3a878; color: #7a6745; }
+  .think-line { background: rgba(200,170,100,.16); border-color: #a5824a; color: #8a6420; }
+  #inputbar { background: linear-gradient(0deg, rgba(160,130,70,.1), transparent), rgba(240,230,205,.94); }
+  #inputbar input { background: rgba(255,252,240,.75); border-color: #b39a6b; color: var(--text); }
+  #inputbar input:focus { border-color: #96691d; box-shadow: 0 0 0 1px rgba(150,105,29,.25), 0 0 10px rgba(150,105,29,.15); }
+  #side { background: linear-gradient(180deg, rgba(220,200,160,.5), transparent 40%), rgba(235,223,195,.92); }
+  .card { background: linear-gradient(180deg, #f3e8cd, #ecddb9); border-color: #c3a878;
+    box-shadow: 0 2px 6px rgba(90,70,35,.2), inset 0 1px 0 rgba(255,255,240,.8); }
+  .card::before { background: linear-gradient(160deg, rgba(150,105,29,.25), transparent 35%, transparent 70%, rgba(150,105,29,.1)); }
+  .card h3 { color: #8a6420; }
+  .card h3::after { background: linear-gradient(90deg, rgba(150,105,29,.4), transparent); }
+  .stage .t, .stage .ms { color: #7a6745; }
+  .stage .dot { background: #cbb894; box-shadow: none; }
+  .stage.done .t { color: #5f8048; }
+  .stage.start .t, .stage.running .t { color: #96691d; }
+  #chat-tabs .ctab { background: rgba(255,250,235,.5); color: #7a6745; border-color: #c3a878; }
+  #chat-tabs .ctab.active { background: linear-gradient(180deg, #ecd9a8, #e0c58b); color: #6d4f16; border-color: #a5824a; }
+  #chatbar { background: rgba(235,222,192,.92); }
+  #world-cards .wcard { background: linear-gradient(180deg, rgba(255,250,235,.5), rgba(240,228,200,.7)); border-color: #c3a878; }
+  #world-cards .wcard.active { background: linear-gradient(180deg, rgba(214,178,110,.25), #ecd9a8); border-color: #a5824a; color: #6d4f16; }
+  #world-cards .wcard .wav { border-color: #b39a6b; background: rgba(255,250,235,.6); }
+  .dbg-block { border-color: #c3a878; background: rgba(250,245,228,.8); }
+  .dbg-block > .dbg-head { background: linear-gradient(180deg, rgba(200,170,100,.18), rgba(240,228,200,.6)); }
+  .dbg-sec pre, .dbg-block pre { background: #f9f2de; border-color: #d6c194; color: #4a3a22; }
+  .ui-modal, #settings-modal { background: linear-gradient(180deg, #f3e8cd, #ecddb9); border-color: #a5824a;
+    box-shadow: 0 14px 44px rgba(70,50,20,.5); }
+  .toast { background: linear-gradient(180deg, #f3e8cd, #ead9b4); border-color: #b39a6b; }
+  #slash-pop { background: linear-gradient(180deg, #f3e8cd, #ecddb9); border-color: #a5824a; }
+  .mini-card { background: linear-gradient(180deg, #f6ecd6, #ecddb9); border-color: #b39a6b; }
+  .card-detail, #gallery-drawer { background: #efe3c8; }
+  #gallery-drawer { border-left-color: #a5824a; }
+  .think-line, .sys-line, .settle-card { box-shadow: 0 2px 6px rgba(90,70,35,.18); }
+  #gallery-grid b { color: #8a6420; }
+  button { }
+  #inputbar button { background: linear-gradient(180deg, #caa75c, #a5712a); color: #fdf6e3;
+    box-shadow: 0 3px 0 #7c5a1e, 0 3px 8px rgba(90,70,35,.35); }
+  .pdb { background: rgba(255,250,235,.6); color: #85704c; border-color: #c3a878; }
+  .pdb:hover { color: #96691d; border-color: #96691d; }
+  .pdb.on { background: #ecd9a8; color: #6d4f16; border-color: #a5824a; }
+  ::selection { background: rgba(200,170,100,.35); }
+
+  /* M13-2 纸面小控件：消息操作条/浮层按钮统一米纸底 + 墨褐字（修深浅搭配） */
+  .msg-ops button {
+    background: linear-gradient(180deg, #faf3e0, #ecddb9);
+    border: 1px solid #c3a878;
+    color: #6b5636;
+    box-shadow: 0 1px 2px rgba(90,70,35,.22);
+  }
+  .msg-ops button:hover {
+    color: #7a4f0e;
+    border-color: #a5824a;
+    background: linear-gradient(180deg, #f7eccf, #e5cd9b);
+    box-shadow: 0 2px 5px rgba(90,70,35,.3), 0 0 8px rgba(166,124,52,.3);
+  }
+  .card-detail { background: #f2e7cc !important; }
+  #gallery-drawer { background: linear-gradient(180deg, #efe3c8, #e7d8b5) !important; }
+  .msg-ops { color: #6b5636; }
+
+  /* M13-3 顶栏与聊天栏按钮：统一米纸小钮 + 墨褐字（替换旧黑底金字残留；!important 压内联） */
+  header {
+    background: linear-gradient(180deg, #f6ecd4, #e9d9b2) !important;
+    border-bottom: 2px solid #a5824a !important;
+    box-shadow: 0 2px 10px rgba(90,70,35,.22);
+  }
+  header h1 { color: #7a4f0e !important; text-shadow: 0 1px 0 rgba(255,252,240,.6); }
+  header h1::after { background: linear-gradient(90deg, transparent, #a5824a, transparent); }
+  header .sub { color: #8a7452; }
+  #chatbar { background: linear-gradient(180deg, #f2e6c9, #e9dab5); border-bottom: 1px solid #c3a878; }
+  #chatbar button {
+    background: linear-gradient(180deg, #faf3e0, #ecd9a8) !important;
+    border: 1px solid #b39a6b !important;
+    color: #6b5636 !important;
+    box-shadow: 0 1px 2px rgba(90,70,35,.2);
+  }
+  #chatbar button:hover { color: #7a4f0e !important; border-color: #a5824a !important; background: linear-gradient(180deg, #f7eccf, #e2c98f) !important; }
+  #chatbar #chat-del { color: #a3482e !important; }
+  #chatbar #chat-del:hover { color: #c0392b !important; border-color: #a3482e !important; }
+  /* persona chip + 顶栏按钮 */
+  #persona-chip {
+    background: linear-gradient(180deg, #faf3e0, #ecd9a8) !important;
+    color: #6b5636 !important;
+    box-shadow: 0 1px 2px rgba(90,70,35,.2) !important;
+    border-color: #b39a6b !important;
+  }
+  #persona-chip b { color: #7a4f0e; }
+  #btn-settings, #btn-export {
+    background: linear-gradient(180deg, #faf3e0, #ecd9a8) !important;
+    border: 1px solid #b39a6b !important;
+    color: #6b5636 !important;
+    box-shadow: 0 1px 2px rgba(90,70,35,.2) !important;
+  }
+  #btn-settings:hover, #btn-export:hover { color: #7a4f0e !important; border-color: #a5824a !important; }
+  #btn-import {
+    background: linear-gradient(180deg, #d4b066, #a5712a) !important;
+    color: #fdf6e3 !important;
+    box-shadow: 0 2px 0 #7c5a1e, 0 2px 6px rgba(90,70,35,.3) !important;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>🍺 PiTavern <span id="page-world" style="color:var(--dim);font-size:13px;font-weight:400;"></span></h1>
+  <span class="sub">四阶段快慢双轨 RPG 引擎</span>
+  <div class="model-tag">
+    <span id="persona-chip" title="点击设置你的身份（你是谁）" style="cursor:pointer;border:1px solid var(--line);border-radius:12px;padding:0 8px;font-size:11px;display:inline-flex;align-items:center;gap:4px;">🧙 <b id="persona-name">旅行者</b> ✎</span>
+    <button id="btn-import" title="导入游戏卡（SillyTavern V1/V2/V3 角色卡 PNG/JSON 或世界包）" style="background:linear-gradient(180deg,#e8c65a,#c9a25e);border:none;border-radius:12px;padding:2px 14px;font-size:11px;font-weight:700;color:#171208;cursor:pointer;box-shadow:0 2px 0 #8a6d2f,0 2px 6px rgba(0,0,0,.4);transition:all .15s;">📥 导入卡</button>
+    <button id="btn-export" title="导出当前世界全部角色卡为 SillyTavern V2 JSON" style="background:rgba(0,0,0,.3);border:1px solid #4a3d26;border-radius:12px;padding:2px 10px;font-size:11px;color:var(--gold-soft);cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.5);transition:all .15s;">📤 导出</button>
+    <button id="btn-settings" title="设置（模型接入/玩家身份/记忆分层）" style="background:rgba(0,0,0,.3);border:1px solid #4a3d26;border-radius:12px;padding:2px 12px;font-size:11px;color:var(--gold-soft);cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.5);transition:all .15s;">⚙ 设置</button>
+  </div>
+</header>
+
+<input id="world-file" type="file" accept=".json,.png,application/json,image/png" style="display:none;">
+<main>
+  <section id="chat">
+    <div id="chatbar">
+      <div id="chat-tabs"></div>
+      <div style="display:flex;gap:6px;flex-shrink:0;">
+        <button id="chat-new" title="新建会话">＋ 新会话</button>
+        <button id="chat-export" title="导出为 JSONL">⬇ 导出</button>
+        <button id="chat-del" title="删除当前会话">🗑</button>
+      </div>
+    </div>
+    <div id="log"></div>
+    <div id="inputbar">
+      <div id="usage-line" style="display:none;flex-basis:100%;font-size:10px;color:var(--dim);text-align:right;padding:0 2px 2px 0;"></div>
+      <div style="position:relative;flex:1;display:flex;min-width:0;">
+        <div id="slash-pop"></div>
+        <input id="input" placeholder="说点什么…（回车发送，/ 查看命令）" autocomplete="off">
+      </div>
+      <button id="send">发送</button>
+  </section>
+
+  <aside id="side">
+    <div class="card">
+      <h3>🎴 我的角色卡 <span style="font-weight:400;font-size:9.5px;color:var(--dim);text-transform:none;letter-spacing:0;">（点选一张开始游玩）</span></h3>
+      <div id="world-cards" style="display:flex;flex-direction:column;gap:7px;margin-bottom:8px;max-height:264px;overflow-y:auto;"></div>
+      <span id="world-status" style="font-size:11px;color:var(--dim);line-height:22px;"></span>
+      <div id="split-stage" style="position:relative;height:0;margin-top:0;overflow:visible;"></div>
+      <div id="split-result" style="display:none;margin-top:10px;border-top:1px dashed var(--line);padding-top:8px;">
+        <div style="font-size:11px;color:var(--dim);margin-bottom:6px;">拆分结果：</div>
+        <div id="split-cards" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+      </div>
+    </div>
+
+
+
+    <div class="card">
+      <h3>四阶段流水线</h3>
+      <div id="stages">
+        <div class="stage" id="st-router"><span class="dot"></span><span class="t">① 前置路由 PreRouter</span><span class="ms"></span></div>
+        <div class="stage" id="st-assembler"><span class="dot"></span><span class="t">② JIT 组装 Assembler</span><span class="ms"></span></div>
+        <div class="stage" id="st-actor"><span class="dot"></span><span class="t">③ 前台演员 Actor</span><span class="ms"></span></div>
+        <div class="stage" id="st-evaluator"><span class="dot"></span><span class="t">④ 后台结算 Evaluator</span><span class="ms"></span></div>
+      </div>
+
+
+    <div class="card" style="display:flex;flex-direction:column;">
+      <h3>🎛 提示词工作台 <span style="font-weight:400;font-size:10px;color:var(--dim);letter-spacing:0;">（上下文构成 · 收发查看）</span>
+        <span style="margin-left:auto;display:inline-flex;gap:5px;font-weight:400;letter-spacing:0;">
+          <button id="tpl-router" title="编辑路由(System)提示词模板" style="background:linear-gradient(180deg,#faf3e0,#ecd9a8);border:1px solid #b39a6b;border-radius:9px;padding:0 8px;font-size:10px;color:#6b5636;cursor:pointer;">✎ 路由模板</button>
+          <button id="tpl-actor" title="编辑演员演绎框架模板" style="background:linear-gradient(180deg,#faf3e0,#ecd9a8);border:1px solid #b39a6b;border-radius:9px;padding:0 8px;font-size:10px;color:#6b5636;cursor:pointer;">✎ 演员模板</button>
+        </span>
+      </h3>
+      <div id="pcfg" style="display:flex;flex-direction:column;gap:6px;margin:2px 0 8px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:rgba(250,245,228,.55);">
+        <div style="font-size:10.5px;color:#8a6420;font-weight:700;">📌 常驻注入（每回合全量发给模型；点 chip 可取消）</div>
+        <div id="pcfg-const" style="display:flex;flex-wrap:wrap;gap:5px;"></div>
+        <div id="pcfg-empty" style="font-size:10.5px;color:var(--dim);">暂无常驻卡 → 打开 🗂 仓库，点卡片上的「📌 常驻」即可加入</div>
+        <div style="font-size:10.5px;color:var(--dim);border-top:1px dashed var(--line);padding-top:5px;" id="pcfg-ctx"></div>
+      </div>
+      <div id="prompt-debug" style="display:flex;margin-top:10px;border-top:1px dashed var(--line);padding-top:8px;flex-direction:column;gap:8px;">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
+          <span style="font-size:11px;color:var(--dim);font-weight:600;">🔍 模型收发（调试）</span>
+          <button id="pdb-expand-all" style="margin-left:auto;background:none;border:none;color:var(--gold);font-size:10px;cursor:pointer;">展开全部</button>
+          <button id="pdb-copy" style="background:none;border:none;color:var(--dim);font-size:10px;cursor:pointer;">⧉ 复制</button>
+        </div>
+        <div id="pdb-empty" style="font-size:11px;color:var(--dim);">还没有数据——发一句话跑一回合试试。</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- 角色画廊抽屉 -->
+  <div id="gallery-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:40;"></div>
+  <aside id="gallery-drawer" style="position:fixed;top:0;right:0;bottom:0;width:360px;background:var(--panel);border-left:1px solid var(--line);z-index:41;transform:translateX(100%);transition:transform .22s ease;display:flex;flex-direction:column;">
+    <div style="display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);">
+      <h3 style="font-size:14px;color:var(--gold);">🗂 角色画廊 <span id="gallery-world" style="color:var(--dim);font-weight:400;font-size:12px;"></span></h3>
+      <button id="gallery-close" style="margin-left:auto;background:var(--panel2);color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:2px 10px;cursor:pointer;">✕</button>
+    </div>
+    <div id="gallery-grid" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px;"></div>
+  </aside>
+
+
+  <!-- 设置弹层（模型接入等） -->
+  <div id="settings-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:600;align-items:flex-start;justify-content:center;padding-top:8vh;"></div>
+  <div id="settings-modal" style="display:none;position:fixed;top:8vh;left:50%;transform:translateX(-50%);width:min(560px,92vw);max-height:78vh;overflow-y:auto;background:var(--panel);border:1px solid #4a3f2a;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.6);z-index:601;padding:16px 20px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+      <h3 style="font-size:15px;color:var(--gold);margin:0;">⚙ 设置</h3>
+      <button id="settings-close" style="margin-left:auto;background:none;border:none;color:var(--dim);font-size:18px;cursor:pointer;">✕</button>
+    </div>
+    <div>
+      <h3>🎯 模型接入</h3>
+      <div class="kv" style="grid-template-columns: 60px 1fr;">
+        <span>Provider</span>
+        <select id="cfg-provider" style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font-size:12px;"></select>
+        <span>API Key</span>
+        <input id="cfg-key" type="password" placeholder="粘贴 API Key" style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font-size:12px;width:100%;">
+        <span>模型</span>
+        <select id="cfg-model" style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font-size:12px;"><option>— 先填 Key 拉取 —</option></select>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
+        <select id="cfg-stage" style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font-size:12px;">
+          <option value="router">① 路由</option>
+          <option value="actor" selected>③ 演员</option>
+          <option value="evaluator">④ 结算</option>
+        </select>
+        <button id="cfg-load" style="background:var(--panel2);color:var(--gold);border:1px solid var(--line);border-radius:4px;padding:3px 10px;font-size:12px;cursor:pointer;">拉取模型</button>
+        <button id="cfg-test" style="background:var(--panel2);color:var(--green);border:1px solid var(--line);border-radius:4px;padding:3px 10px;font-size:12px;cursor:pointer;">测连通</button>
+        <button id="cfg-apply" style="background:var(--gold);color:#14120c;border:none;border-radius:4px;padding:3px 10px;font-size:12px;font-weight:600;cursor:pointer;">应用到阶段</button>
+      </div>
+      <div id="cfg-msg" style="font-size:11px;color:var(--dim);margin-top:6px;min-height:14px;"></div>
+        <div style="font-size:13px;color:var(--gold);font-weight:600;margin-bottom:8px;">🧠 记忆分层</div>
+        <div class="hint" style="margin-bottom:8px;line-height:1.7;">完整上下文默认全量发给模型，记忆分层负责把旧层压缩成摘要：<br>
+        到达 <b style="color:var(--gold-soft)">压缩宽度 + 缓冲</b> 层时，把最旧一段（压缩宽度）压成「层回顾」卡；<br>
+        最近 <b style="color:var(--gold-soft)">缓冲</b> 层始终保留全文。例：宽度 20 + 缓冲 10 → 第 30 层压 1-20，21-30 仍全文。</div>
+        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+          <label style="display:flex;flex-direction:column;gap:3px;font-size:10.5px;color:var(--dim);">
+            压缩宽度（每几层压一段）
+            <input id="set-compress-every" type="number" min="0" max="200" value="20" style="width:76px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:13px;">
+          </label>
+          <label style="display:flex;flex-direction:column;gap:3px;font-size:10.5px;color:var(--dim);">
+            缓冲层（保留全文的最近层数）
+            <input id="set-layer-buffer" type="number" min="0" max="100" value="10" style="width:76px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:13px;">
+          </label>
+          <button id="set-summary-save" style="background:var(--gold);color:#14120c;border:none;border-radius:6px;padding:7px 16px;font-size:12px;font-weight:600;cursor:pointer;">保存</button>
+        </div>
+        <div id="set-layer-demo" style="font-size:10.5px;color:var(--dim);margin-top:6px;min-height:14px;"></div>
+        <span id="set-summary-msg" style="font-size:11px;color:var(--dim);display:block;margin-top:4px;"></span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- M7 UI 基建：toast / modal -->
+  <div id="toast-root"></div>
+  <div id="modal-root">
+    <div class="ui-modal" id="ui-modal-box">
+      <header><span id="ui-modal-title">标题</span><button class="x" id="ui-modal-x">✕</button></header>
+      <div class="mbody" id="ui-modal-body"></div>
+      <footer id="ui-modal-foot"></footer>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const log = $('log');
+
+/* ================= M7 UI 基建：toast / modal ================= */
+/** 轻提示：toast('删除成功') / toast('失败原因', 'err') */
+function toast(text, kind) {
+  let root = $('toast-root');
+  const el = document.createElement('div');
+  el.className = 'toast' + (kind === 'err' ? ' err' : kind === 'ok' ? ' ok' : '');
+  el.textContent = text;
+  root.appendChild(el);
+  setTimeout(() => {
+    el.classList.add('out');
+    setTimeout(() => el.remove(), 320);
+  }, kind === 'err' ? 5000 : 2600);
+}
+
+/** 打开模态框；bodyEls: [{tag:'input'|'textarea'|'text'|'hint', label, value, placeholder, rows}], actions: [{label, cls, onClick}] */
+function openModal(title, bodyEls, actions) {
+  $('ui-modal-title').textContent = title;
+  const body = $('ui-modal-body');
+  body.innerHTML = '';
+  for (const b of bodyEls || []) {
+    if (b.tag === 'hint') {
+      const h = document.createElement('div');
+      h.className = 'hint';
+      h.textContent = b.value || '';
+      body.appendChild(h);
+      continue;
+    }
+    const lab = document.createElement('label');
+    if (b.label) {
+      const sp = document.createElement('span');
+      sp.textContent = b.label;
+      lab.appendChild(sp);
+    }
+    const el = document.createElement(b.tag === 'textarea' ? 'textarea' : 'input');
+    if (b.tag === 'textarea' && b.rows) el.rows = b.rows;
+    el.value = b.value ?? '';
+    if (b.placeholder) el.placeholder = b.placeholder;
+    el.dataset.k = b.key ?? b.label;
+    lab.appendChild(el);
+    body.appendChild(lab);
+  }
+  const foot = $('ui-modal-foot');
+  foot.innerHTML = '';
+  for (const a of actions || []) {
+    const btn = document.createElement('button');
+    btn.className = 'btn' + (a.cls ? ' ' + a.cls : '');
+    btn.textContent = a.label;
+    btn.onclick = () => {
+      const vals = {};
+      body.querySelectorAll('[data-k]').forEach((x) => { vals[x.dataset.k] = x.value; });
+      a.onClick(vals);
+    };
+    foot.appendChild(btn);
+  }
+  $('modal-root').classList.add('show');
+  const first = body.querySelector('input, textarea');
+  if (first) first.focus();
+}
+function closeModal() { $('modal-root').classList.remove('show'); }
+/** 确认框：resolve(true/false) */
+function uiConfirm(title, text, danger) {
+  return new Promise((resolve) => {
+    openModal(title, [{ tag: 'hint', value: text }], [
+      { label: '取消', onClick: () => { closeModal(); resolve(false); } },
+      { label: danger ? '删除' : '确定', cls: danger ? 'danger' : 'primary', onClick: () => { closeModal(); resolve(true); } },
+    ]);
+  });
+}
+$('ui-modal-x').onclick = closeModal;
+$('modal-root').onclick = (e) => { if (e.target === $('modal-root')) closeModal(); };
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('modal-root').classList.contains('show')) closeModal(); });
+const stages = ['router', 'assembler', 'actor', 'evaluator'];
+const stageIds = { router: 'st-router', assembler: 'st-assembler', actor: 'st-actor', evaluator: 'st-evaluator' };
+
+let ws = null;
+let busy = false;
+/** 当前正在流式输出的 NPC 消息 body（Actor 阶段） */
+let streamingBody = null;
+/** 回合进行中的状态行（发送后 ~ Actor 开始前，给用户"有反应"的反馈） */
+let statusLine = null;
+
+/** 本会话累计 token（真实模型才有值） */
+let sessionUsage = { input: 0, output: 0 };
+/**
+ * 世界状态面板：把 id 显示成可读名字。
+ * turn 来自世界 state；场景/在场 id 用 world_cards 缓存（cardMetaById）解析为名字。
+ */
+function renderWorldPanel(turn, sceneId, presentIds) {
+  const tEl = $('w-turn'); if (tEl && turn != null) tEl.textContent = turn;
+  const sEl = $('w-scene'); if (sEl) sEl.textContent = sceneId ? (sceneIdToName[sceneId] || sceneId.replace(/^scene_/, '')) : '—';
+  const pEl = $('w-present'); if (pEl) {
+    if (!presentIds || presentIds.length === 0) pEl.textContent = '（无人）';
+    else pEl.textContent = presentIds.map(id => (cardMetaById[id] ? cardMetaById[id].name : id.replace(/^char_/, ''))).join('、');
+  }
+  // 场景/在场需要名字映射时，若缓存缺失则拉一次 world_cards
+  if (sceneId && !sceneIdToName[sceneId] && currentWorldId) {
+    ws.send(JSON.stringify({ type: 'world_cards', worldId: currentWorldId }));
+  }
+}
+
+function renderUsage() {
+  const el = $('usage-line');
+  if (!el) return;
+  if (sessionUsage.input + sessionUsage.output > 0) {
+    el.style.display = 'block';
+    el.textContent = `本会话 token：↑${sessionUsage.input} 输入 · ↓${sessionUsage.output} 输出`;
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+function setStatusLine(text) {
+  if (!statusLine || !statusLine.isConnected) {
+    statusLine = document.createElement('div');
+    statusLine.className = 'think-line';
+    log.appendChild(statusLine);
+  }
+  statusLine.textContent = text;
+  log.scrollTop = log.scrollHeight;
+}
+function clearStatusLine() {
+  if (statusLine && statusLine.isConnected) statusLine.remove();
+  statusLine = null;
+}
+
+/** 渲染一条历史/新消息。msgId 有值时挂 hover 操作条（编辑/删除/楼层） */
+function addMsg(role, text, who, msgId, swipeCount, excludedFlag) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  if (who) {
+    const whoEl = document.createElement('div');
+    whoEl.className = 'who' + (role === 'user' ? ' who-user' : '');
+    whoEl.textContent = who;
+    div.appendChild(whoEl);
+  }
+  const body = document.createElement('div');
+  body.className = 'body';
+  body.textContent = text;
+  div.appendChild(body);
+  if (msgId) {
+    div.dataset.msgid = msgId;
+    if (excludedFlag) div.classList.add('msg-excluded');
+    attachMsgOps(div, role, swipeCount || 0, excludedFlag);
+  }
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  return body;
+}
+
+/** 给消息 DOM 挂 hover 操作条 */
+function attachMsgOps(div, role, swipeCount, excluded) {
+  const ops = document.createElement('div');
+  ops.className = 'msg-ops';
+  const mk = (label, fn) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.onclick = (e) => { e.stopPropagation(); fn(); };
+    ops.appendChild(b);
+  };
+  const msgId = div.dataset.msgid;
+  if (role === 'npc' && swipeCount > 0) {
+    mk(`◀ 楼层（${swipeCount} 个旧版）`, () => ws.send(JSON.stringify({ type: 'chat_swipe', direction: 'prev', messageId: msgId })));
+  }
+  // 出戏开关：excluded 行不进模型上下文（本地即时视觉反馈，服务端广播确认）
+  mk(excluded ? '回场' : '⊘ 出戏', () => {
+    const next = !excluded;
+    div.classList.toggle('msg-excluded', next);
+    div.querySelectorAll('.msg-ops button').forEach(btn => {
+      if (btn.textContent === '回场' || btn.textContent === '⊘ 出戏') btn.textContent = next ? '回场' : '⊘ 出戏';
+    });
+    ws.send(JSON.stringify({ type: 'chat_set_excluded', messageId: msgId, excluded: next }));
+  });
+  mk('编辑', () => {
+    const bodyEl = div.querySelector('.body');
+    const cur = bodyEl ? bodyEl.textContent : '';
+    openModal('✏️ 编辑消息', [
+      { tag: 'textarea', label: '内容', key: 'text', value: cur, rows: 4 },
+    ], [
+      { label: '取消', onClick: () => closeModal() },
+      { label: '保存', cls: 'primary', onClick: (v) => {
+        const txt = String(v.text || '').trim();
+        if (!txt) { toast('内容不能为空', 'err'); return; }
+        closeModal();
+        ws.send(JSON.stringify({ type: 'chat_edit', messageId: msgId, text: txt }));
+      } },
+    ]);
+  });
+  mk('删除', () => {
+    void uiConfirm('🗑 删除消息', '确定删除这条消息吗？（不可恢复）', true).then((ok) => {
+      if (ok) ws.send(JSON.stringify({ type: 'chat_delete_message', messageId: msgId }));
+    });
+  });
+  if (role === 'npc') {
+    mk('↻ 重新生成', () => ws.send(JSON.stringify({ type: 'chat_regenerate' })));
+  }
+  div.appendChild(ops);
+}
+
+/** 用某条消息的新 id 激活操作条（turn_done 后给流式渲染的 NPC 消息补 id） */
+function enableMsgOps(div, msgId) {
+  if (!div || !msgId) return;
+  if (!div.querySelector('.msg-ops')) {
+    div.dataset.msgid = msgId;
+    attachMsgOps(div, div.classList.contains('npc') ? 'npc' : 'user');
+  } else {
+    div.dataset.msgid = msgId;
+  }
+}
+function addSys(text) {
+  const div = document.createElement('div');
+  div.className = 'sys-line';
+  div.textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+/* ---- Actor 流式打字 ---- */
+/** ③ 开始时创建 NPC 占位消息（带闪烁光标） */
+function beginTyping() {
+  const last = log.lastElementChild;
+  const isStreaming = last && last.classList.contains('msg') && last.classList.contains('npc') && last.querySelector('.cursor');
+  if (isStreaming) return;
+  const div = document.createElement('div');
+  div.className = 'msg npc';
+  const whoEl = document.createElement('div');
+  whoEl.className = 'who';
+  whoEl.textContent = speakerNames.NPC || '角色';
+  div.appendChild(whoEl);
+  const body = document.createElement('div');
+  body.className = 'body';
+  div.appendChild(body);
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  return body;
+}
+/** 在指定 body 末尾追加文本并保持光标在末尾 */
+/* ---- 打字机（逐字丝滑输出） ---- */
+const TYPE_SPEED = 38;      // 每字毫秒（约 26 字/秒，中文舒适）
+let typeQueue = '';          // 待渲染文本
+let typeTimer = null;
+
+function typeCursorOn(body) {
+  if (!body.querySelector('.cursor')) {
+    const c = document.createElement('span');
+    c.className = 'cursor';
+    body.appendChild(c);
+  }
+}
+
+function typeFlush(body) {
+  // 消费队首一个字渲染出来（光标保持末尾）
+  const cur = body.querySelector('.cursor');
+  if (cur) cur.remove();
+  const ch = typeQueue[0];
+  if (ch !== undefined) {
+    body.appendChild(document.createTextNode(ch));
+    typeQueue = typeQueue.slice(1);
+  }
+  typeCursorOn(body);
+  log.scrollTop = log.scrollHeight;
+  // 队列清空时停表（下个 delta 到来会重启）
+  if (typeQueue.length === 0 && typeTimer) {
+    clearInterval(typeTimer);
+    typeTimer = null;
+  }
+}
+
+/** delta 到达：入队。队列空时立即吐首字（首字不等一拍），后续按节奏逐字 */
+function appendDelta(body, text) {
+  typeQueue += text;
+  if (!typeTimer) {
+    typeTimer = setInterval(() => typeFlush(body), TYPE_SPEED);
+    typeFlush(body); // 立即先吐一个字
+  }
+}
+
+/** 流式结束：把剩余队列立即渲染完并移除光标 */
+function endTyping() {
+  if (typeTimer) { clearInterval(typeTimer); typeTimer = null; }
+  const last = log.lastElementChild;
+  if (!last) return;
+  const cur = last.querySelector && last.querySelector('.cursor');
+  if (cur) cur.remove();
+  // 剩余未渲染文本直接铺完
+  if (typeQueue.length > 0) {
+    const body = last.querySelector('.body');
+    if (body) {
+      body.appendChild(document.createTextNode(typeQueue));
+      typeQueue = '';
+    }
+  }
+}
+
+/** 本回合两阶段模型收发（调试面板用；新回合清空）
+ *  每阶段: { request: {system, messages[], tools}, response: string, ms, model? }
+ *  路由: 抽卡请求 → JSON 清单回复；演员: 演绎请求 → 台词流式回复。
+ */
+const dbgData = { router: null, actor: null };
+/** 折叠状态：stage/sec 名 → 是否展开（默认 response 展开，request 收起） */
+const dbgOpen = { router_block: true, actor_block: false, 'router-req': true, 'router-res': true, 'actor-req': true, 'actor-res': true };
+
+function clearStages() {
+  stages.forEach(s => {
+    const el = $(stageIds[s]);
+    el.className = 'stage';
+    el.querySelector('.ms').textContent = '';
+  });
+  // 新回合：清空调试数据
+  dbgData.router = null;
+  dbgData.actor = null;
+  const box = $('prompt-debug');
+  if (box) {
+    // 面板常驻：清数据但保持可见（显示占位）
+    const empty = $('pdb-empty');
+    if (empty) {
+      empty.style.display = 'block';
+      empty.textContent = '等待回合…发一句话后这里实时展示路由抽卡与演员演绎的完整收发。';
+    }
+    const oldBlocks = box.querySelectorAll('.dbg-block');
+    oldBlocks.forEach(b => b.remove());
+  }
+}
+
+/** 折叠小节：<details>-like 手写（pre 全量不截断） */
+/** 把提示词文本按「【段标题】」行拆成小节（如系统规则/世界库/剧情段分别展示） */
+function splitCtxSections(text, fallbackTitle) {
+  const lines = String(text || '').split('\n');
+  const parts = [];
+  let cur = null;
+  for (const ln of lines) {
+    const m = ln.match(/^【([^】]{1,40})】\s*$/);
+    if (m) {
+      cur = { title: m[1], body: [] };
+      parts.push(cur);
+    } else if (cur) {
+      cur.body.push(ln);
+    } else {
+      // 段前导内容（回合信息等）归入首段
+      if (parts.length === 0) {
+        cur = { title: fallbackTitle, body: [] };
+        parts.push(cur);
+      }
+      cur.body.push(ln);
+    }
+  }
+  if (parts.length === 0) parts.push({ title: fallbackTitle, body: [] });
+  return parts.map((p) => ({ title: p.title, body: p.body.join('\n').trim() || '（空）' }));
+}
+
+function dbgSec(key, title, tk, bodyHtml) {
+  const sec = document.createElement('div');
+  // 默认展开（undefined = 未手动折叠过）；手动点过才记住收起/展开
+  sec.className = 'dbg-sec' + (dbgOpen[key] === false ? '' : ' open');
+  sec.dataset.sec = key;
+  const head = document.createElement('div');
+  head.className = 'dbg-sec-head';
+  head.innerHTML = `<span class="arr">▶</span><span>${title}</span><span class="tk">${tk || ''}</span>`;
+  head.onclick = () => {
+    const open = sec.classList.toggle('open');
+    dbgOpen[key] = open;
+  };
+  const body = document.createElement('div');
+  body.className = 'dbg-sec-body';
+  body.innerHTML = bodyHtml;
+  sec.appendChild(head);
+  sec.appendChild(body);
+  return sec;
+}
+
+function renderPromptDebug() {
+  const box = $('prompt-debug');
+  if (!box) return;
+  const hasAny = dbgData.router || dbgData.actor;
+  if (!hasAny) return;
+  const empty = $('pdb-empty');
+  if (empty) empty.style.display = 'none';
+  // 清旧块
+  box.querySelectorAll('.dbg-block').forEach(b => b.remove());
+
+  // ---- 阶段块构建器 ----
+  const mkBlock = (stage, name, label, d) => {
+    const blk = document.createElement('div');
+    blk.className = 'dbg-block' + (dbgOpen[stage + '_block'] ? ' open' : '');
+    blk.dataset.blk = stage;
+    const head = document.createElement('div');
+    head.className = 'dbg-head';
+    // 预演（预览 request 且无回复）→ 等待输入；回合中 → 请求中/已回复
+    const preview = d && d.request && d.response == null && d.preview;
+    const stText = d && d.response != null ? '✓ 已回复' : preview ? '⏳ 等待你输入（预演）' : d && d.request ? '… 请求中' : '等待';
+    head.innerHTML = `<span class="arr">▶</span><span>${label}</span><span class="st">${stText}</span>`;
+    if (d && d.ms != null) {
+      const tt = document.createElement('span');
+      tt.className = 'tt';
+      tt.textContent = d.ms + 'ms';
+      head.appendChild(tt);
+    }
+    head.onclick = () => {
+      const open = blk.classList.toggle('open');
+      dbgOpen[stage + '_block'] = open;
+    };
+    const body = document.createElement('div');
+    body.className = 'dbg-body';
+    if (!d || !d.request) {
+      const w = document.createElement('div');
+      w.style.cssText = 'padding:8px 10px;font-size:10.5px;color:var(--dim);';
+      w.textContent = name === 'router' ? '路由尚未跑完（或本回合还没发消息）' : '演员尚未开始（路由/组装完成后自动出现）';
+      body.appendChild(w);
+    } else {
+      const req = d.request;
+      // —— Request：分层展示 system / messages / tools（content 自动按【段标题】拆分小节）——
+      const secKeyBase = stage + '-' + (d.preview ? 'pv' : 'real') + '-' + (Date.now() % 100000);
+      if (req.system) {
+        const parts = splitCtxSections(req.system, '🎛 System 系统指令');
+        parts.forEach((p, pi) => {
+          body.appendChild(dbgSec(secKeyBase + '-sys' + pi, p.title, p.body.length + ' 字符', `<pre>${esc(p.body)}</pre>`));
+        });
+      }
+      (req.messages || []).forEach((m, i) => {
+        // 路由的 user 消息承载的是「回合信息 + 世界库 + 近N层剧情」；玩家输入已在近N层末尾，
+        // 不再立一个"用户(最新输入)"误导层
+        const fb = m.role === '用户(最新输入)'
+          ? (stage === 'router' ? '📍 回合信息与剧情输入（玩家输入已含于近N层末尾）' : '💬 玩家输入')
+          : m.role;
+        const parts = splitCtxSections(m.content, fb);
+        parts.forEach((p, pi) => {
+          body.appendChild(dbgSec(secKeyBase + '-msg' + i + '-' + pi, p.title, p.body.length + ' 字符', `<pre>${esc(p.body)}</pre>`));
+        });
+      });
+      if (req.tools) {
+        body.appendChild(dbgSec(secKeyBase + '-tools', '🔧 Tools 工具', '', `<pre>${esc(req.tools)}</pre>`));
+      }
+      // —— Response：模型完整回复 ——
+      const hasRes = d.response != null && d.response !== '';
+      const resTitle = hasRes ? '📤 模型回复（完整）' : d.preview ? '📤 模型回复（待玩家输入后产生）' : '📤 模型回复（…等待中）';
+      const resEmpty = d.preview
+        ? '<div style="font-size:10.5px;color:var(--dim);padding:2px 0;">这是预演：路由请求已按当前世界构造，发消息后模型将在此输出抽卡 JSON。</div>'
+        : '<div style="font-size:10.5px;color:var(--dim);padding:2px 0;">回复尚未到达（流式输出中/尚未完成）</div>';
+      body.appendChild(dbgSec(stage + '-res', resTitle, hasRes ? d.response.length + ' 字符' : '', hasRes ? `<pre>${esc(d.response)}</pre>` : resEmpty));
+    }
+    blk.appendChild(head);
+    blk.appendChild(body);
+    box.appendChild(blk);
+  };
+
+  mkBlock('router', 'router', '① 前置路由 PreRouter — 抽卡', dbgData.router);
+  mkBlock('actor', 'actor', '③ 前台演员 Actor — 演绎', dbgData.actor);
+}
+
+/** HTML 转义（调试文本原样显示） */
+function esc(t) {
+  return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/* 面板绑定（顶层执行一次） */
+(function bindPromptDebug() {
+  const box = $('prompt-debug');
+  if (!box) return;
+  const copyBtn = $('pdb-copy');
+  if (copyBtn) copyBtn.onclick = () => {
+    const parts = [];
+    const dump = (d) => {
+      if (!d) return;
+      if (d.request) {
+        if (d.request.system) parts.push('【System】\n' + d.request.system);
+        (d.request.messages || []).forEach(m => parts.push(`【${m.role}】\n${m.content}`));
+        if (d.request.tools) parts.push('【Tools】\n' + d.request.tools);
+      }
+      if (d.response != null) parts.push('【模型回复】\n' + d.response);
+    };
+    dump(dbgData.router);
+    parts.push('\n========================================\n');
+    dump(dbgData.actor);
+    if (parts.length === 0) return;
+    navigator.clipboard.writeText(parts.join('\n\n')).then(() => toast('已复制全部收发 ⧉', 'ok')).catch(() => toast('复制失败', 'err'));
+  };
+  const expandAll = $('pdb-expand-all');
+  if (expandAll) expandAll.onclick = () => {
+    Object.keys(dbgOpen).forEach(k => { dbgOpen[k] = true; });
+    renderPromptDebug();
+  };
+})();
+
+function setStage(stage, status, ms) {
+  const el = $(stageIds[stage]);
+  const MIN_SHOW_MS = 160; // 快阶段（assembler ~0.1ms）至少闪烁一帧，肉眼可见
+  if (status === 'start') {
+    // 本阶段亮金闪（前面的阶段保持绿 = 已完成走过的流水线）
+    el.className = 'stage start';
+    el.dataset.startAt = Date.now();
+  } else if (status === 'done') {
+    const elapsed = Date.now() - (parseInt(el.dataset.startAt || '0', 10) || 0);
+    const showGreen = () => { el.className = 'stage done'; };
+    if (elapsed < MIN_SHOW_MS) {
+      // 太快的阶段：先补足闪烁时间再变绿
+      setTimeout(showGreen, MIN_SHOW_MS - elapsed);
+    } else {
+      showGreen();
+    }
+  } else if (status === 'error') {
+    el.className = 'stage error';
+  }
+  if (ms != null) el.querySelector('.ms').textContent = ms.toFixed(1) + 'ms';
+}
+
+/** 结算摘要卡：好感变动 + 内心想法 + 房间变化（一条系统行，可读可折叠） */
+function renderSettleCard(result, affections) {
+  const parts = [];
+  const affChanges = result.affectionChanges || [];
+  if (affChanges.length > 0) {
+    const desc = affChanges.map(c => {
+      const name = c.characterId.replace(/^char_/, '');
+      const cls = c.delta > 0 ? 'up' : (c.delta < 0 ? 'down' : '');
+      const cur = affections[c.characterId] != null ? `（${affections[c.characterId]}）` : '';
+      return `<span class="${cls}">${name} ${c.delta > 0 ? '+' : ''}${c.delta}${cur}</span>`;
+    }).join(' ');
+    parts.push(`<b>💛 好感</b> ${desc}`);
+  }
+  const thoughts = result.innerThoughts || [];
+  if (thoughts.length > 0) {
+    parts.push(`<b>💭 内心</b> <span class="thought">${thoughts.map(t => `${t.characterId.replace(/^char_/, '')}：${t.thought}`).join('；')}</span>`);
+  }
+  const rooms = result.roomChanges || [];
+  if (rooms.length > 0) parts.push(`<b>🏠 房间</b> ${rooms.join('；')}`);
+  if (parts.length === 0) return;
+  const div = document.createElement('div');
+  div.className = 'settle-card';
+  div.innerHTML = '⚙ ' + parts.join('　·　');
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+function connect() {
+  // 轻鉴权：页面 URL 带 ?token=xxx 时记住（服务端设 PT_TOKEN 时需要）
+  const qp = new URLSearchParams(location.search);
+  const qToken = qp.get('token');
+  if (qToken) localStorage.setItem('pt_token', qToken);
+  const token = localStorage.getItem('pt_token');
+  const qs = token ? '?token=' + encodeURIComponent(token) : '';
+  ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws' + qs);
+  ws.onopen = () => addSys('已连接世界引擎 ✓');
+  ws.onclose = (e) => {
+    addSys(e.code === 1006 && token ? '连接被拒绝：服务端可能设了 PT_TOKEN（访问地址请带 ?token=）' : '连接断开，3 秒后重连…');
+    setTimeout(connect, 3000);
+  };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    switch (msg.type) {
+      case 'hello':
+        loadProviders();
+        // 默认进入「上次玩的世界」（localStorage 记忆）；首次 auto = 服务端默认（校园卡，无则示例）
+        ws.send(JSON.stringify({ type: 'world_select', worldId: localStorage.getItem('pt_last_world') || 'auto' }));
+        break;
+      case 'world_cards': {
+        const meta = {};
+        (msg.cards || []).forEach(c => { meta[c.id] = { name: c.name, kind: c.kind }; });
+        if (msg.worldId === currentWorldId) { cardMetaById = meta; sceneIdToName = {}; Object.keys(meta).forEach(id => { if (meta[id].kind === 'scene') sceneIdToName[id] = meta[id].name; }); }
+        renderGallery(msg.worldId, msg.cards || []);
+        // M13-4：提示词工作台（常驻注入区）随仓库数据重绘
+        if (msg.worldId === currentWorldId) renderPromptSettings(msg.cards || []);
+        break;
+      }
+      case 'world_list': {
+        const box = $('world-cards');
+        box.innerHTML = '';
+        // 更新页面标题的世界名
+        const cur = (msg.worlds || []).find(w => w.worldId === msg.current);
+        $('page-world').textContent = cur ? `· ${cur.name}` : '';
+        const worlds = msg.worlds || [];
+        // 若列表里没有当前世界（如 demo 未被列出），补一个
+        if (!worlds.some(w => w.worldId === msg.current) && msg.current) {
+          worlds.unshift({ worldId: msg.current, name: msg.current.replace('world_', '').replace('demo_', '示例世界'), characters: [], scenes: [] });
+        }
+        worlds.forEach(w => {
+          const card = document.createElement('div');
+          card.className = 'wcard' + (w.worldId === msg.current ? ' active' : '');
+          const dot = document.createElement('span');
+          dot.className = 'wdot';
+          // 封面头像（角色包封面：主角 PNG 头像）
+          const av = document.createElement('span');
+          av.className = 'wav';
+          if (w.avatar) av.innerHTML = `<img src="${w.avatar}" alt="">`;
+          else av.textContent = w.worldId === 'demo_world' ? '🍺' : '🃏';
+          const mid = document.createElement('span');
+          mid.style.cssText = 'display:flex;flex-direction:column;min-width:0;flex:1;';
+          const name = document.createElement('span');
+          name.className = 'wname';
+          name.textContent = w.name;
+          if (w.kind === 'demo') {
+            const dg = document.createElement('span');
+            dg.className = 'wdemo';
+            dg.textContent = '示例';
+            name.appendChild(dg);
+          }
+          const meta = document.createElement('span');
+          meta.className = 'wmeta';
+          const c = w.counts || {};
+          const parts = [];
+          if (c.character) parts.push(`🧙${c.character}`);
+          if (c.player) parts.push(`🎮${c.player}`);
+          if (c.memory) parts.push(`📜${c.memory}`);
+          if (c.scene) parts.push(`🏰${c.scene}`);
+          if (c.item) parts.push(`🗡️${c.item}`);
+          meta.textContent = parts.join(' ') || '空';
+          mid.appendChild(name); mid.appendChild(meta);
+          // M12：开场白预览（该卡的 first_mes —— 帮助你决定玩哪张）
+          if (w.greeting && w.greeting.text) {
+            const g = document.createElement('span');
+            g.className = 'wgreet';
+            g.textContent = `💬 ${w.greeting.text.replace(/<[^>]+>/g, ' ').slice(0, 66)}${w.greeting.text.length > 66 ? '…' : ''}`;
+            g.title = w.greeting.text.replace(/<[^>]+>/g, ' ').slice(0, 400);
+            mid.appendChild(g);
+          }
+          card.appendChild(dot); card.appendChild(av); card.appendChild(mid);
+          card.onclick = () => {
+            if (w.worldId !== msg.current) {
+              // 切世界并展开该仓库的分组浏览
+              openGallery(w.worldId);
+              ws.send(JSON.stringify({ type: 'world_select', worldId: w.worldId }));
+            } else {
+              // 当前仓库：再点一次 = 开关画廊
+              const d = $('gallery-drawer');
+              if (d.style.transform === 'translateX(0px)') closeGallery();
+              else openGallery(w.worldId);
+            }
+          };
+          // 独立展开按钮：不切世界只开画廊
+          const expandBtn = document.createElement('span');
+          expandBtn.textContent = '🗂';
+          expandBtn.title = '浏览仓库内容';
+          expandBtn.style.cssText = 'font-size:12px;flex-shrink:0;cursor:pointer;opacity:.7;';
+          expandBtn.onclick = (e) => { e.stopPropagation(); openGallery(w.worldId); };
+          mid.appendChild(expandBtn);
+          box.appendChild(card);
+        });
+        break;
+      }
+      case 'settings': {
+        const st = msg.settings || {};
+        promptTpl.routerSystem = (st.promptTemplates && st.promptTemplates.routerSystem) || '';
+        promptTpl.actorFrame = (st.promptTemplates && st.promptTemplates.actorFrame) || '';
+        const ce = $('set-compress-every');
+        if (ce) ce.value = st.layerCompressEvery != null ? String(st.layerCompressEvery) : (st.summaryEveryTurns != null ? String(st.summaryEveryTurns) : '20');
+        const lb = $('set-layer-buffer');
+        if (lb) lb.value = st.layerBuffer != null ? String(st.layerBuffer) : (st.summaryEveryTurns != null ? '0' : '10');
+        updateLayerDemo();
+        break;
+      }
+      case 'persona': {
+        const p = msg.persona;
+        myPersona = p || null;
+        $('persona-name').textContent = (p && p.name) || '旅行者';
+        $('persona-chip').title = p && p.description ? `${p.name} —— ${p.description}` : '点击设置你的身份（你是谁）';
+        // 头像
+        const img = $('persona-chip').querySelector('img');
+        if (p && p.avatar) {
+          if (!img) {
+            const im = document.createElement('img');
+            im.style.cssText = 'width:16px;height:16px;border-radius:50%;object-fit:cover;';
+            $('persona-chip').insertBefore(im, $('persona-chip').firstChild);
+            im.src = p.avatar;
+          } else { img.src = p.avatar; }
+        } else if (img) { img.remove(); }
+        break;
+      }
+      case 'world_selected': {
+        try { localStorage.setItem('pt_last_world', msg.worldId); } catch (e) {}
+        currentWorldId = msg.worldId;
+        setWorldStatus(`已切换到 ${msg.worldId}`, 'var(--green)');
+        refreshWorlds();
+        // 世界状态初始填充（首屏不再空；回合推进后 world 事件权威更新）
+        if (msg.state) {
+          presentIdsNow = msg.state.presentCharacterIds || [];
+          renderWorldPanel(msg.state.turn, msg.state.sceneId, presentIdsNow);
+        }
+        // 路由上下文预演：未发消息也能在面板看到「路由将收到的提示词」
+        if (msg.debugPreview) {
+          dbgData.router = { request: msg.debugPreview, response: null, ms: null, preview: true };
+          renderPromptDebug();
+        }
+        // 拉一次本世界卡元信息（id→名字映射，供面板/画廊）
+        ws.send(JSON.stringify({ type: 'world_cards', worldId: msg.worldId }));
+        // 会话已由服务端选好（world_select 响应带 chats/chat/history）
+        if (msg.chats) renderChatTabs(msg.chats);
+        if (msg.chatId) {
+          currentChatId = msg.chatId;
+          currentChatTitle = (msg.chat && msg.chat.title) || '';
+          speakerNames.NPC = currentChatTitle.replace(/^与 /, '').replace(/ 的冒险$/, '') || '角色';
+          const u = (msg.chat && msg.chat.usage) || {};
+          sessionUsage = { input: u.input || 0, output: u.output || 0 };
+          renderUsage();
+          if (msg.history) restoreHistory(msg.history);
+          ws.send(JSON.stringify({ type: 'persona_get' }));
+          ws.send(JSON.stringify({ type: 'settings_get' }));
+        }
+        break;
+      }
+      case 'world_imported': {
+        const s = msg.summary;
+        playSplitAnimation(s);
+        setWorldStatus(`✓ 导入「${s.world}」`, 'var(--green)');
+        toast(`已导入「${s.world}」：🧙${s.counts.character || 0} 角色 · 📜${s.counts.memory || 0} 记忆 · 🏰${s.counts.scene || 0} 场景 · 🗡️${s.counts.item || 0} 物品`, 'ok');
+        refreshWorlds();
+        // 服务端已自动切换新世界并建会话
+        if (msg.chatId) {
+          currentWorldId = msg.worldId;
+          currentChatId = msg.chatId;
+          currentChatTitle = (msg.chat && msg.chat.title) || '';
+          speakerNames.NPC = currentChatTitle.replace(/^与 /, '').replace(/ 的冒险$/, '') || '角色';
+          refreshWorlds();
+          renderChatTabs([msg.chat].filter(Boolean));
+          addSys(`📦 已导入新世界，自动开始新会话「${currentChatTitle}」`);
+        }
+        break;
+      }
+      case 'world_characters_exported': {
+        // 下载导出 JSON（角色多时打包成列表；单个直接下载）
+        const cards = msg.cards || [];
+        if (cards.length === 0) { setWorldStatus('该世界没有可导出的角色卡', 'var(--red)'); break; }
+        const blobContent = cards.length === 1 ? JSON.stringify(cards[0], null, 2) : JSON.stringify(cards, null, 2);
+        const blob = new Blob([blobContent], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${msg.worldId || 'world'}-characters${cards.length > 1 ? `-${cards.length}cards` : ''}.json`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        setWorldStatus(`⬇ 已导出 ${cards.length} 张角色卡`, 'var(--green)');
+        break;
+      }
+      case 'chat_list': {
+        currentWorldId = msg.worldId;
+        currentChatId = msg.current || currentChatId;
+        renderChatTabs(msg.chats);
+        break;
+      }
+      case 'chat_selected': {
+        currentChatId = msg.chatId;
+        currentChatTitle = msg.title;
+        speakerNames.NPC = (msg.title || '').replace(/^与 /, '').replace(/ 的冒险$/, '') || '角色';
+        const u = (msg.chat && msg.chat.usage) || {};
+        sessionUsage = { input: u.input || 0, output: u.output || 0 };
+        renderUsage();
+        restoreHistory(msg.history || []);
+        addSys(`📂 已切换到会话「${msg.title}」`);
+        refreshChats();
+        ws.send(JSON.stringify({ type: 'persona_get' }));
+        break;
+      }
+      case 'chat_renamed': {
+        addSys(`✏️ 会话已重命名为「${msg.title}」`);
+        refreshChats();
+        break;
+      }
+      case 'chat_deleted': {
+        addSys(`🗑 会话已删除`);
+        refreshChats();
+        break;
+      }
+      case 'chat_exported': {
+        const blob = new Blob([msg.jsonl], { type: 'application/x-ndjson' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${msg.title || msg.chatId}.jsonl`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        addSys(`⬇ 已导出「${msg.title}」(${(msg.jsonl || '').split('\n').filter(Boolean).length} 条)`);
+        break;
+      }
+      case 'provider_list': {
+        const sel = $('cfg-provider');
+        sel.innerHTML = '';
+        msg.providers.forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p.id;
+          opt.textContent = p.id + (p.configured ? ' ✓' : '');
+          sel.appendChild(opt);
+        });
+        break;
+      }
+      case 'provider_models': {
+        const sel = $('cfg-model');
+        sel.innerHTML = '';
+        if (!msg.models.length) {
+          cfgLog(`${msg.provider} 没有可用模型`, 'var(--red)');
+          return;
+        }
+        msg.models.forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = m.id;
+          opt.textContent = m.id;
+          sel.appendChild(opt);
+        });
+        cfgLog(`${msg.provider} 共 ${msg.models.length} 个模型，选择后点「应用到阶段」`, 'var(--green)');
+        break;
+      }
+      case 'provider_test_result':
+        cfgLog(msg.ok ? '✓ ' + msg.message : '✗ ' + msg.message, msg.ok ? 'var(--green)' : 'var(--red)');
+        break;
+      case 'provider_set_ok':
+        cfgLog(`✓ 已应用 ${msg.provider}/${msg.model} 到 ${msg.stage}（立即生效）`, 'var(--green)');
+        break;
+      case 'stage': {
+        const s = msg.stage;
+        setStage(s, msg.status, msg.tookMs);
+        // 调试：捕获两阶段模型收发（分层：request 结构 + response 全文）
+        if (s === 'router' && msg.status === 'done' && msg.detail) {
+          dbgData.router = {
+            request: msg.detail.request || null,
+            response: msg.detail.rawResponse != null ? msg.detail.rawResponse : (msg.detail.debugPrompt ? '(路由输出见下)' : null),
+            ms: msg.tookMs,
+          };
+          renderPromptDebug();
+        }
+        if (s === 'actor' && msg.status === 'start' && msg.detail) {
+          dbgData.actor = { request: msg.detail.request || null, response: null, ms: null };
+          renderPromptDebug();
+        }
+        if (s === 'actor' && msg.status === 'done' && msg.detail) {
+          if (!dbgData.actor) dbgData.actor = { request: null, response: null, ms: null };
+          dbgData.actor.response = msg.detail.response != null ? msg.detail.response : null;
+          dbgData.actor.ms = msg.tookMs;
+          renderPromptDebug();
+        }
+        if (s === 'actor' && msg.status === 'error') {
+          if (!dbgData.actor) dbgData.actor = { request: null, response: null, ms: null };
+          dbgData.actor.response = dbgData.actor.response || '(演员阶段出错：' + String(msg.detail || '') + ')';
+          dbgData.actor.ms = msg.tookMs;
+          renderPromptDebug();
+        }
+        // Actor 流式联动：③开始 → 占位消息+光标；③结束 → 收光标
+        if (s === 'actor' && msg.status === 'start') {
+          clearStatusLine(); // 开始打字，去掉思考行
+          streamingBody = beginTyping();
+        }
+        if (s === 'actor' && msg.status === 'done') {
+          endTyping();
+        }
+        if (s === 'actor' && msg.status === 'error') {
+          clearStatusLine();
+        }
+        // 阶段推进时更新状态行文案（让用户看到进度而不是干等）
+        if (s === 'router' && msg.status === 'done') setStatusLine('🗂 已选好本回合卡片…');
+        if (s === 'assembler' && msg.status === 'done') {
+          setStatusLine('✍️ 角色正在酝酿回答…');
+        }
+        break;
+      }
+      case 'delta': {
+        // 流式正文：追加到正在输入的 NPC 消息
+        if (!streamingBody) streamingBody = beginTyping(); // 兜底：没有占位就新建
+        appendDelta(streamingBody, msg.text);
+        break;
+      }
+      case 'world': {
+        presentIdsNow = msg.presentCharacterIds || [];
+        renderWorldPanel(msg.turn, msg.sceneId, presentIdsNow);
+        break;
+      }
+      case 'settled': {
+        // 结算完成：渲染摘要卡（好感变动/内心想法/房间变化）+ 右侧好感刷新
+        const r = msg.result || {};
+        const aff = msg.affections || {};
+        const keys = Object.keys(aff);
+        const affEl = $('w-affection');
+        if (affEl) {
+          if (keys.length > 0) {
+            const parts = keys.map(k => `${k.replace(/^char_/, '')}: ${aff[k]}`);
+            affEl.textContent = parts.join('  ');
+          } else {
+            const changes = (r.affectionChanges || []).map(c => (c.delta > 0 ? '+' : '') + c.delta).join(',');
+            if (changes) affEl.textContent = `本回合 ${changes}`;
+          }
+        }
+        renderSettleCard(r, aff);
+        break;
+      }
+      case 'turn_done': {
+        busy = false;
+        $('send').disabled = false;
+        $('input').disabled = false;
+        // 流式收尾：移除打字光标 + 清空队列
+        endTyping();
+        typeQueue = '';
+        const streamedDiv = streamingBody ? streamingBody.closest('.msg') : log.lastElementChild;
+        streamingBody = null;
+        clearStatusLine();
+        // 回合号已由 world 事件权威更新（回合末即时广播），此处不再 +1 猜测
+        // 本回合 token 用量累计显示
+        if (msg.usage) {
+          sessionUsage.input += msg.usage.input || 0;
+          sessionUsage.output += msg.usage.output || 0;
+          renderUsage();
+        }
+        // 给刚流式完成的 NPC 消息补 id → 激活 hover 操作条（编辑/删除/重roll）
+        if (msg.lastNpcId) {
+          const div = streamedDiv && streamedDiv.classList.contains('msg') ? streamedDiv : log.lastElementChild;
+          if (div && div.classList.contains('npc')) enableMsgOps(div, msg.lastNpcId);
+        }
+        break;
+      }
+      case 'chat_history_changed': {
+        // 消息被编辑/删除（本端或他端）：若属于当前会话则整区重建
+        if (msg.chatId === currentChatId) {
+          const scrollAtBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+          restoreHistory(msg.history || []);
+          if (scrollAtBottom) log.scrollTop = log.scrollHeight;
+          addSys('✏️ 消息已更新');
+        }
+        break;
+      }
+      case 'chat_rolled_back': {
+        if (msg.chatId === currentChatId) addSys('↻ 正在重新生成回复…');
+        break;
+      }
+      case 'error':
+        busy = false;
+        $('send').disabled = false;
+        $('input').disabled = false;
+        endTyping();
+        typeQueue = '';
+        streamingBody = null;
+        clearStatusLine();
+        addSys('⚠️ ' + msg.message);
+        break;
+    }
+  };
+}
+
+/* ---------------- 会话管理 ---------------- */
+let currentChatId = null;
+let currentWorldId = 'demo_world';
+/** M13-4：当前世界最近一次 world_cards 全量（提示词工作台数据源） */
+let lastWorldCards = [];
+/** M16：提示词模板（settings 事件读回；'' = 使用内置默认） */
+const promptTpl = { routerSystem: '', actorFrame: '' };
+/** M10-P2B：当前世界在场角色 id（画廊角色卡标「在场/可召唤」） */
+let presentIdsNow = [];
+let currentChatTitle = '';
+let myPersona = null; // 玩家档案（persona 事件更新）
+const speakerNames = {}; // speaker 名 → 会话内显示（NCP 讲话显示角色名）
+/** 当前世界卡元信息缓存：cardId → {name, kind}（世界状态面板把 id 显示成名字） */
+let cardMetaById = {};
+let sceneIdToName = {};
+
+function renderChatTabs(chats) {
+  const box = $('chat-tabs');
+  box.innerHTML = '';
+  (chats || []).forEach(c => {
+    const tab = document.createElement('span');
+    tab.className = 'ctab' + (c.chatId === currentChatId ? ' active' : '');
+    tab.textContent = c.title;
+    tab.title = `${c.title}\n回合 ${c.state.turn} · ${new Date(c.updatedAt).toLocaleString()}`;
+    tab.onclick = () => {
+      if (c.chatId !== currentChatId) ws.send(JSON.stringify({ type: 'chat_select', chatId: c.chatId }));
+    };
+    tab.ondblclick = () => {
+      if (c.chatId !== currentChatId) return;
+      openModal('✏️ 重命名会话', [
+        { tag: 'input', label: '标题', key: 'title', value: c.title },
+      ], [
+        { label: '取消', onClick: () => closeModal() },
+        { label: '保存', cls: 'primary', onClick: (v) => {
+          const title = String(v.title || '').trim();
+          if (!title) return;
+          closeModal();
+          ws.send(JSON.stringify({ type: 'chat_rename', chatId: c.chatId, title }));
+          toast('已重命名 ✓', 'ok');
+        } },
+      ]);
+    };
+    box.appendChild(tab);
+  });
+}
+
+/** 从历史消息重建聊天区（刷新/切换会话后） */
+function restoreHistory(history) {
+  log.innerHTML = '';
+  const userName = (myPersona && myPersona.name) || '你';
+  (history || []).forEach(h => {
+    const swipes = (h.swipes || []).length;
+    if (h.speaker === 'user') addMsg('user', h.text, userName, h.id, 0, h.excluded);
+    else if (h.speaker === 'ooc') addMsg('ooc', h.text, null, h.id, 0, h.excluded);
+    else if (h.text) addMsg('npc', h.text, h.speaker === 'NPC' ? (speakerNames.NPC || '角色') : h.speaker, h.id, swipes, h.excluded);
+    // 其它 speaker（内部润滑行/旧数据）不渲染，避免暴露 char_xxx 等内部数据
+  });
+}
+
+function refreshChats() {
+  ws.send(JSON.stringify({ type: 'chat_list' }));
+}
+
+function send() {
+  const input = $('input');
+  const text = input.value.trim();
+  if (!text || busy) return;
+  input.value = '';
+  // 斜杠命令：/ooc /roll 本地即显，不触发回合 busy（服务端广播确认）
+  if (text.startsWith('/ooc ')) {
+    addMsg('ooc', text.slice(5).trim());
+    ws.send(JSON.stringify({ type: 'chat', text }));
+    return;
+  }
+  if (/^\/(roll|r)\s+\d*d\d+/i.test(text)) {
+    addMsg('user', text, (myPersona && myPersona.name) || '你');
+    ws.send(JSON.stringify({ type: 'chat', text }));
+    return;
+  }
+  if (text === '/help' || text.startsWith('/help ')) { openHelp(); return; }
+  busy = true;
+  $('send').disabled = true;
+  $('input').disabled = true;
+  addMsg('user', text, (myPersona && myPersona.name) || '你');
+  // 重置阶段面板（新一轮回合：全灭，从①开始接力）
+  clearStages();
+  // 立即给反馈：思考中状态行（PreRouter 网络耗时期间用户知道"有反应"）
+  setStatusLine('🧠 正在思考你的话…');
+  ws.send(JSON.stringify({ type: 'chat', text }));
+}
+
+/* ---------------- 世界库 ---------------- */
+const worldStatus = $('world-status');
+function refreshWorlds() {
+  ws.send(JSON.stringify({ type: 'world_list' }));
+}
+function setWorldStatus(txt, color) {
+  worldStatus.textContent = txt;
+  worldStatus.style.color = color || 'var(--dim)';
+}
+
+
+$('btn-export').onclick = () => {
+  if (!currentWorldId) return;
+  ws.send(JSON.stringify({ type: 'world_export_characters', worldId: currentWorldId }));
+};
+
+/* ---------------- 角色画廊抽屉 ---------------- */
+const GALLERY_KIND = { character: '🧙 角色', scene: '🏰 场景', memory: '📜 记忆', item: '🗡️ 物品', system: '🌍 世界' };
+function openGallery(worldId) {
+  const wid = worldId || currentWorldId;
+  if (!wid) return;
+  $('gallery-overlay').style.display = 'block';
+  const d = $('gallery-drawer');
+  d.style.transform = 'translateX(0)';
+  $('gallery-world').textContent = `· ${wid === 'demo_world' ? '演示旅馆' : wid.replace(/^world_/, '')}`;
+  ws.send(JSON.stringify({ type: 'world_cards', worldId: wid }));
+}
+function closeGallery() {
+  $('gallery-drawer').style.transform = 'translateX(100%)';
+  $('gallery-overlay').style.display = 'none';
+}
+/** M13-4：提示词工作台——常驻注入 chips + 语境行（法则/玩家/说明） */
+function renderPromptSettings(cards) {
+  const box = $('pcfg');
+  if (!box) return;
+  const consts = (cards || []).filter(c => c.constant);
+  const chipWrap = $('pcfg-const');
+  chipWrap.innerHTML = '';
+  const empty = $('pcfg-empty');
+  if (consts.length === 0) { empty.style.display = 'block'; }
+  else {
+    empty.style.display = 'none';
+    consts.forEach(c => {
+      const chip = document.createElement('span');
+      const icon = c.kind === 'character' ? (c.isPlayer ? '🎮' : '🧙') : c.kind === 'memory'
+        ? ({ worldview: '🌍', plot: '📖', rule: '🧭' })[c.mclass] || '📌'
+        : c.kind === 'scene' ? '🏰' : c.kind === 'item' ? '🗡️' : c.kind === 'system' ? '⚖️' : '📄';
+      chip.textContent = `${icon} ${c.name} ✕`;
+      chip.title = '常驻：每回合全量注入模型上下文。点此取消常驻。';
+      chip.style.cssText = 'font-size:10px;padding:1px 8px;border-radius:9px;border:1px solid #a5824a;background:linear-gradient(180deg,#faf3e0,#ecd9a8);color:#6d4f16;cursor:pointer;transition:all .15s;';
+      chip.onmouseover = () => { chip.style.background = '#f0d9a4'; };
+      chip.onmouseout = () => { chip.style.background = 'linear-gradient(180deg,#faf3e0,#ecd9a8)'; };
+      chip.onclick = () => ws.send(JSON.stringify({ type: 'card_update', cardId: c.id, patch: { constant: false } }));
+      chipWrap.appendChild(chip);
+    });
+  }
+  // 语境行：法则 / 玩家 / 说明
+  const ctx = $('pcfg-ctx');
+  if (ctx) {
+    const sys = (cards || []).find(c => c.kind === 'system');
+    const player = (cards || []).find(c => c.kind === 'character' && c.isPlayer);
+    const parts = [];
+    if (sys) parts.push(`⚖️ 系统法则：${sys.name}（固定注入）`);
+    if (player) parts.push(`🎮 玩家：${player.name}（身份段）`);
+    parts.push('🧙 角色 / 📌 事件记忆：由 🎲 路由按剧情抽卡进上下文');
+    ctx.textContent = parts.join(' · ');
+  }
+}
+function renderGallery(worldId, cards) {
+  const grid = $('gallery-grid');
+  grid.innerHTML = '';
+  if (cards.length === 0) {
+    grid.innerHTML = '<div style="color:var(--dim);font-size:12px;">这个世界还没有卡片。</div>';
+    return;
+  }
+  const slice = (s, n) => (s && s.length > n ? s.slice(0, n) + '…' : s || '');
+  // —— 分组浏览：按类型分节（🧙角色 / 📜记忆 / 🏰场景 / 🗡️物品 / 🌍系统）——
+  // M11：卡片分类节——🎮玩家 / 🧙角色 / 🌍世界观 / 📖主线剧情 / 🧭规则状态机 /
+  //        📌记忆·事件 / 🏰场景 / 🗡️物品 / ⚖️世界法则（memory 按 mclass 拆节）
+  const SECTION_META = [
+    { kind: 'player', label: '🎮 玩家', sub: '', filter: c => c.kind === 'character' && c.isPlayer },
+    { kind: 'character', label: '🧙 角色', sub: 'c.subtitle', filter: c => c.kind === 'character' && !c.isPlayer },
+    { kind: 'memory-wv', label: '🌍 世界观', sub: 'const', filter: c => c.kind === 'memory' && !c.isSummary && c.mclass === 'worldview' },
+    { kind: 'memory-plot', label: '📖 主线剧情', sub: 'const', filter: c => c.kind === 'memory' && !c.isSummary && c.mclass === 'plot' },
+    { kind: 'memory-rule', label: '🧭 规则 · 状态机', sub: 'const', filter: c => c.kind === 'memory' && !c.isSummary && c.mclass === 'rule' },
+    { kind: 'memory', label: '📌 记忆 · 事件', sub: 'layer', filter: c => c.kind === 'memory' && !c.isSummary && c.mclass !== 'worldview' && c.mclass !== 'plot' && c.mclass !== 'rule' },
+    { kind: 'scene', label: '🏰 场景', sub: '', filter: c => c.kind === 'scene' },
+    { kind: 'item', label: '🗡️ 物品', sub: '', filter: c => c.kind === 'item' },
+    { kind: 'system', label: '⚖️ 世界法则', sub: '', filter: c => c.kind === 'system' },
+  ];
+  // M10：物品按归属挂到角色名下（角色详情可见其所有物；无主/场景物品仍留在物品组）
+  const charItems = (charId) => cards.filter(c => c.kind === 'item' && c.ownerCharacterId && c.ownerCharacterId !== 'player' && c.ownerCharacterId === charId);
+  const grouped = SECTION_META.map(sec => ({ sec, items: sec.filter ? cards.filter(sec.filter) : cards.filter(c => c.kind === sec.kind) })).filter(g => g.items.length > 0);
+  const unownedItems = cards.filter(c => c.kind === 'item' && (!c.ownerCharacterId || c.ownerCharacterId === 'player'));
+  const leftover = cards.filter(c => !SECTION_META.some(sec => sec.kind === c.kind));
+  const addItemCard = (c) => {
+    const item = document.createElement('div');
+    item.style.cssText = 'display:flex;gap:10px;padding:10px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;cursor:pointer;';
+    item.title = `token ≈ ${c.textTokens ?? '?'}`;
+    // 头像或 kind 图标
+    const icon = document.createElement('div');
+    icon.style.cssText = 'width:44px;height:44px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:22px;background:var(--panel);overflow:hidden;';
+    if (c.avatar) icon.innerHTML = `<img src="${c.avatar}" style="width:100%;height:100%;object-fit:cover;">`;
+    else icon.textContent = ({ character: '🧙', player: '🎮', scene: '🏰', memory: '📜', item: '🗡️', system: '🌍' })[c.kind] || ((c.isPlayer && '🎮') || '📄');
+    item.appendChild(icon);
+    const info = document.createElement('div');
+    info.style.cssText = 'flex:1;min-width:0;';
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;gap:6px;align-items:baseline;';
+    const name = document.createElement('b');
+    name.textContent = c.name;
+    name.style.fontSize = '13px';
+    head.appendChild(name);
+    if (c.role) { const r = document.createElement('span'); r.textContent = c.role; r.style.cssText = 'color:var(--dim);font-size:10px;'; head.appendChild(r); }
+    // M10-P2B：角色池在场/可召唤标记（玩家卡不算——它是"我"）
+    if (c.kind === 'character' && !c.isPlayer) {
+      const st = document.createElement('span');
+      const on = presentIdsNow.indexOf(c.id) >= 0;
+      st.textContent = on ? '● 在场' : '○ 可召唤';
+      st.style.cssText = `font-size:9.5px;padding:0 6px;border-radius:8px;border:1px solid ${on ? 'var(--green)' : 'var(--line)'};color:${on ? 'var(--green)' : 'var(--dim)'};background:rgba(0,0,0,.25);`;
+      head.appendChild(st);
+    }
+    // M13：常驻 chip = 拨动开关（任何 kind 可点；非常驻呈灰钮）
+    {
+      const cst = document.createElement('span');
+      const on = !!c.constant;
+      cst.textContent = '📌 常驻';
+      cst.title = on ? '常驻：每回合全量进上下文。点此取消。' : '点此设为常驻（每回合全量进上下文，不靠关键词抽取）';
+      cst.style.cssText = `font-size:9.5px;padding:0 6px;border-radius:8px;border:1px solid ${on ? 'var(--gold)' : 'var(--line)'};color:${on ? 'var(--gold)' : 'var(--dim)'};background:${on ? 'rgba(212,175,55,.12)' : 'transparent'};cursor:pointer;transition:all .15s;user-select:none;`;
+      cst.onclick = (e) => {
+        e.stopPropagation();
+        ws.send(JSON.stringify({ type: 'card_update', cardId: c.id, patch: { constant: !on } }));
+        // 乐观更新卡面，等 world_cards 广播对齐
+        on = !on;
+        cst.style.borderColor = on ? 'var(--gold)' : 'var(--line)';
+        cst.style.color = on ? 'var(--gold)' : 'var(--dim)';
+        cst.style.background = on ? 'rgba(212,175,55,.12)' : 'transparent';
+      };
+      head.appendChild(cst);
+    }
+    const tk = document.createElement('span');
+    tk.textContent = `≈${c.textTokens ?? '?'}tok`;
+    tk.style.cssText = 'margin-left:auto;color:var(--dim);font-size:10px;';
+    head.appendChild(tk);
+    info.appendChild(head);
+    const body = document.createElement('div');
+    body.style.cssText = 'color:var(--dim);font-size:11px;line-height:1.5;margin-top:3px;white-space:pre-wrap;';
+    const ownerName = (c.kind === 'memory' || c.kind === 'item') && c.ownerCharacterId ? (nameById[c.ownerCharacterId] || c.ownerCharacterId) : null;
+    const locText = c.kind === 'item' && c.itemLocation ? ` · ${({ character: '在角色处', scene: '在场景', player: '在玩家身上' })[c.itemLocation] || c.itemLocation}${c.itemLocation === 'character' && c.itemLocationId ? '(' + (nameById[c.itemLocationId] || c.itemLocationId) + ')' : ''}` : '';
+    body.textContent = (ownerName ? `[${ownerName}所有] ` : '') + slice(c.kind === 'character' ? (c.description || c.openingLine || '') : (c.summary || c.description || ''), 90) + locText;
+    info.appendChild(body);
+    // M10：角色卡附「其所有物」摘要行（从同仓 items 推导归属）
+    if (c.kind === 'character') {
+      const owned = cards.filter(x => x.kind === 'item' && x.ownerCharacterId && x.ownerCharacterId !== 'player' && x.ownerCharacterId === c.id);
+      if (owned.length > 0) {
+        const ow = document.createElement('div');
+        ow.style.cssText = 'color:var(--gold-soft);font-size:10.5px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+        ow.textContent = `🎒 所有物: ${owned.map(x => x.name).join('、')}`;
+        ow.title = ow.textContent;
+        info.appendChild(ow);
+      }
+    }
+    item.appendChild(info);
+    item.onclick = () => {
+      // 内联详情/编辑面板（点击切换展开收起）
+      const existing = item.parentElement.querySelector('.card-detail[data-id="' + c.id + '"]');
+      if (existing) { existing.remove(); return; }
+      const panel = document.createElement('div');
+      panel.className = 'card-detail';
+      panel.dataset.id = c.id;
+      panel.style.cssText = 'padding:10px;background:#12100c;border:1px dashed var(--line);border-radius:8px;margin-top:-4px;font-size:12px;line-height:1.6;display:flex;flex-direction:column;gap:6px;';
+
+      const addRow = (label, val, field, textarea) => {
+        const row = document.createElement('label');
+        row.style.cssText = 'display:flex;flex-direction:column;gap:2px;font-size:10px;color:var(--dim);';
+        row.textContent = label;
+        const el = document.createElement(textarea ? 'textarea' : 'input');
+        el.value = val || '';
+        el.style.cssText = 'background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font-size:12px;resize:vertical;';
+        el.dataset.field = field;
+        row.appendChild(el);
+        panel.appendChild(row);
+        return el;
+      };
+      const editable = c.kind === 'character' || c.kind === 'item';
+      let editableForSystem = false;
+      let editableFlag = false;
+      if (editable) {
+        addRow('身份 role', c.role, 'role');
+        addRow('描述 description', c.description, 'description', true);
+        addRow('性格 personality', c.personality, 'personality', true);
+        addRow('背景 scenario', c.scenario, 'scenario', true);
+        addRow('说话风格 speechStyle', c.speechStyle, 'speechStyle', true);
+        addRow('开场白 openingLine', c.openingLine, 'openingLine', true);
+        addRow('关系网（每行：目标|关系|备注）', (c.relationships || []).map(r => [r.targetName, r.relation, r.note || ''].filter(Boolean).join('|')).join('\n'), 'relationships_text', true);
+        addRow('成长档案（每行一条经历）', (c.progression || []).join('\n'), 'progression_text', true);
+      } else if (c.kind === 'scene') {
+        addRow('场景名 name', c.name, 'name');
+        addRow('描述 description', c.description, 'description', true);
+      } else if (c.kind === 'item') {
+        addRow('物品名 name', c.name, 'name');
+        addRow('描述 description', c.description, 'description', true);
+        // 位置下拉：场景内/某角色处/玩家身上
+        const locRow = document.createElement('label');
+        locRow.style.cssText = 'display:flex;flex-direction:column;gap:2px;font-size:10px;color:var(--dim);';
+        locRow.textContent = '位置 location';
+        const locSel = document.createElement('select');
+        locSel.style.cssText = 'background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font-size:12px;';
+        [['scene', '在场景内'], ['character', '在某角色处'], ['player', '在玩家身上']].forEach(([v, l]) => {
+          const o = document.createElement('option');
+          o.value = v; o.textContent = l; o.selected = c.itemLocation === v;
+          locSel.appendChild(o);
+        });
+        locRow.appendChild(locSel);
+        panel.appendChild(locRow);
+        // 所有者下拉：无主 / 玩家 / 仓库角色（用 nameById 反查 id？world_cards 的 character 在 cards 里有 id）
+        const ownerRow = document.createElement('label');
+        ownerRow.style.cssText = 'display:flex;flex-direction:column;gap:2px;font-size:10px;color:var(--dim);';
+        ownerRow.textContent = '所有者 owner（归属角色或玩家；空=无主）';
+        const ownerSel = document.createElement('select');
+        ownerSel.style.cssText = 'background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font-size:12px;';
+        const opt0 = document.createElement('option');
+        opt0.value = ''; opt0.textContent = '— 无主 —'; opt0.selected = !c.ownerCharacterId;
+        ownerSel.appendChild(opt0);
+        const optP = document.createElement('option');
+        optP.value = 'player'; optP.textContent = '👤 玩家所有'; optP.selected = c.ownerCharacterId === 'player';
+        ownerSel.appendChild(optP);
+        cards.filter(x => x.kind === 'character').forEach(x => {
+          const o = document.createElement('option');
+          o.value = x.id; o.textContent = '🧙 ' + x.name; o.selected = c.ownerCharacterId === x.id;
+          ownerSel.appendChild(o);
+        });
+        ownerRow.appendChild(ownerSel);
+        panel.appendChild(ownerRow);
+        const locIdHint = document.createElement('div');
+        locIdHint.style.cssText = 'font-size:10px;color:var(--dim);';
+        locIdHint.textContent = c.itemLocation === 'character' && c.itemLocationId ? `当前在: ${nameById[c.itemLocationId] || c.itemLocationId} 处` : '';
+        panel.appendChild(locIdHint);
+        // 保存时收集 select 值
+        panel._extraCollect = () => {
+          const p = {};
+          p.location = locSel.value;
+          p.ownerCharacterId = ownerSel.value || null;
+          return p;
+        };
+      } else if (c.kind === 'system') {
+        const txt = document.createElement('div');
+        txt.style.cssText = 'color:var(--dim);font-size:11px;white-space:pre-wrap;';
+        txt.textContent = `【规则】\n${(c.rules || []).join('\n')}\n\n【大事记】\n${(c.timeline || []).join('\n') || '(空)'}`;
+        panel.appendChild(txt);
+        addRow('大事记（每行一条，如：第3回合 暴雨淹了北街）', (c.timeline || []).join('\n'), 'timeline_text', true);
+        editableForSystem = true;
+      } else if (c.kind === 'memory') {
+        // M13：记忆卡可编辑（标题/正文/小类；常驻拨动用卡面 chip）
+        addRow('标题（一句话概括）', c.memSummary || c.name || '', 'summary');
+        addRow('正文', c.detail || '', 'detail', true);
+        // 小类下拉：世界观/主线/规则/事件
+        const clRow = document.createElement('label');
+        clRow.style.cssText = 'display:flex;flex-direction:column;gap:2px;font-size:10px;color:var(--dim);';
+        clRow.textContent = '类别 mclass';
+        const clSel = document.createElement('select');
+        clSel.style.cssText = 'background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font-size:12px;';
+        [['worldview', '🌍 世界观'], ['plot', '📖 主线剧情'], ['rule', '🧭 规则·状态机'], ['event', '📌 记忆·事件']].forEach(([v, l]) => {
+          const o = document.createElement('option');
+          o.value = v; o.textContent = l; o.selected = c.mclass === v || (!c.mclass && v === 'event');
+          clSel.appendChild(o);
+        });
+        clRow.appendChild(clSel);
+        panel.appendChild(clRow);
+        panel._extraCollect = () => ({ mclass: clSel.value });
+      } else {
+        const txt = document.createElement('div');
+        txt.style.cssText = 'color:var(--dim);font-size:11px;white-space:pre-wrap;';
+        txt.textContent = c.summary || c.description || c.openingLine || '(无可编辑内容)';
+        panel.appendChild(txt);
+      }
+      if (editable || c.kind === 'scene' || c.kind === 'system') {
+        const bar = document.createElement('div');
+        bar.style.cssText = 'display:flex;gap:6px;justify-content:flex-end;align-items:center;';
+        const save = document.createElement('button');
+        save.textContent = '💾 保存';
+        save.style.cssText = 'background:var(--gold);color:#14120c;border:none;border-radius:4px;padding:3px 14px;cursor:pointer;font-size:12px;';
+        save.onclick = () => {
+          const patch = {};
+          panel.querySelectorAll('[data-field]').forEach(el => { patch[el.dataset.field] = el.value; });
+          // 下拉等非 data-field 收集器（物品的位置/所有者）
+          if (panel._extraCollect) Object.assign(patch, panel._extraCollect());
+          // 文本行字段 → 结构化数组（关系网/成长档案/大事记）
+          if (patch.relationships_text !== undefined) {
+            patch.relationships = String(patch.relationships_text).split('\n').filter(Boolean).map(line => {
+              const [targetName = '', relation = '', ...rest] = line.split('|');
+              const note = rest.join('|');
+              return { targetName: targetName.trim(), relation: relation.trim(), note: note.trim() || undefined };
+            }).filter(r => r.targetName);
+            delete patch.relationships_text;
+          }
+          if (patch.progression_text !== undefined) {
+            patch.progression = String(patch.progression_text).split('\n').map(x => x.trim()).filter(Boolean);
+            delete patch.progression_text;
+          }
+          if (patch.timeline_text !== undefined) {
+            patch.timeline = String(patch.timeline_text).split('\n').map(x => x.trim()).filter(Boolean);
+            delete patch.timeline_text;
+          }
+          ws.send(JSON.stringify({ type: 'card_update', cardId: c.id, patch }));
+          panel.remove();
+          toast('已保存 ✓', 'ok');
+        };
+        const del = document.createElement('button');
+        del.textContent = '🗑 删除卡';
+        del.style.cssText = 'margin-right:auto;background:#4a2222;color:#ff9d9d;border:1px solid #7a3a3a;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:12px;';
+        del.onclick = () => {
+          void uiConfirm(`🗑 删除「${c.name}」`, '删除后：在场名单/场景引用/记忆归属将自动清理；对话历史保留。此操作不可恢复。', true).then((ok) => {
+            if (!ok) return;
+            ws.send(JSON.stringify({ type: 'card_delete', cardId: c.id, worldId: currentWorldId }));
+            panel.remove();
+            toast('已删除「' + c.name + '」', 'ok');
+          });
+        };
+        const cancel = document.createElement('button');
+        cancel.textContent = '收起';
+        cancel.style.cssText = 'background:var(--panel2);color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:3px 10px;cursor:pointer;font-size:12px;';
+        cancel.onclick = () => panel.remove();
+        bar.appendChild(del);
+        bar.appendChild(cancel);
+        bar.appendChild(save);
+        panel.appendChild(bar);
+      }
+      item.after(panel);
+    };
+    return item;
+  };
+  // 记忆归属显示：id → 角色名
+  const nameById = {};
+  cards.forEach(c => { if (c.kind === 'character') nameById[c.id] = c.name; });
+  // 无任何卡
+  if (grouped.length === 0 && leftover.length === 0) {
+    grid.innerHTML = '<div style="color:var(--dim);font-size:12px;">这个仓库还没有卡片。</div>';
+    return;
+  }
+  const secWrap = (sec, els) => {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;gap:6px;margin:2px 0 0;';
+    const title = document.createElement('b');
+    title.textContent = sec.label;
+    title.style.cssText = 'font-size:12px;color:var(--gold);';
+    const cnt = document.createElement('span');
+    cnt.textContent = String(els.length);
+    cnt.style.cssText = 'font-size:10px;color:var(--dim);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:0 7px;';
+    head.appendChild(title); head.appendChild(cnt);
+    wrap.appendChild(head);
+    els.forEach(el => wrap.appendChild(el));
+    return wrap;
+  };
+  grouped.forEach(g => {
+    if (g.sec.kind === 'memory' && g.items.some(c => c.isSummary)) {
+      // 记忆簿子分组：层回顾（旧剧情归档）在前，普通记忆在后
+      const layerItems = g.items.filter(c => c.isSummary).sort((a, b) => (a.layerFrom || 0) - (b.layerFrom || 0));
+      const plainItems = g.items.filter(c => !c.isSummary);
+      if (layerItems.length > 0) {
+        const sub = document.createElement('div');
+        sub.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
+        const head = document.createElement('div');
+        head.textContent = '🗂 层回顾（已归档剧情）';
+        head.style.cssText = 'font-size:11px;color:var(--dim);margin-top:8px;';
+        sub.appendChild(head);
+        layerItems.map(addItemCard).forEach(el => sub.appendChild(el));
+        grid.appendChild(sub);
+      }
+      if (plainItems.length > 0) {
+        const sub = document.createElement('div');
+        sub.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
+        const head = document.createElement('div');
+        head.textContent = '📌 即席记忆';
+        head.style.cssText = 'font-size:11px;color:var(--dim);margin-top:8px;';
+        sub.appendChild(head);
+        plainItems.map(addItemCard).forEach(el => sub.appendChild(el));
+        grid.appendChild(sub);
+      }
+      return;
+    }
+    const els = g.items.map(addItemCard);
+    grid.appendChild(secWrap(g.sec, els));
+  });
+  if (leftover.length > 0) {
+    grid.appendChild(secWrap({ kind: 'other', label: '📄 其它' }, leftover.map(addItemCard)));
+  }
+}
+$('gallery-close').onclick = closeGallery;
+$('gallery-overlay').onclick = closeGallery;
+$('btn-import').onclick = () => $('world-file').click();
+
+/* ---------------- M16 提示词模板编辑 ---------------- */
+function tplModal(kind) {
+  const isRouter = kind === 'router';
+  const cur = isRouter ? promptTpl.routerSystem : promptTpl.actorFrame;
+  const title = isRouter ? '✎ 路由 System 模板' : '✎ 演员演绎框架模板';
+  const hint = isRouter
+    ? '这是每回合发给路由模型的 System 指令（规则/工具/输出）。留空 = 内置默认。可含 {{char}} 等宏吗？路由 System 无宏，纯文本。'
+    : '演员收到设定前的一段"你是XX，怎么演"框架。留空 = 内置默认。可用 {{char}}（展开为主讲角色名）。';
+  openModal(title, [
+    { tag: 'hint', value: hint },
+    { tag: 'textarea', label: '模板内容（空 = 恢复内置默认）', value: cur, rows: 12 },
+  ], [
+    { label: '取消', cls: '', onClick: () => {} },
+    { label: '保存', cls: 'primary', onClick: (vals) => {
+      const v = String(vals['模板内容（空 = 恢复内置默认）'] ?? '').trim();
+      const patch = isRouter ? { routerSystem: v } : { actorFrame: v };
+      ws.send(JSON.stringify({ type: 'settings_set', ...patch }));
+      toast(isRouter ? (v ? '路由模板已保存 ✓' : '已恢复内置默认 ✓') : (v ? '演员模板已保存 ✓' : '已恢复内置默认 ✓'), 'ok');
+    } },
+  ]);
+}
+$('tpl-router').onclick = () => tplModal('router');
+$('tpl-actor').onclick = () => tplModal('actor');
+$('world-file').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const text = await file.text();
+  // 若是 PNG 则转 base64
+  if (file.type === 'image/png' || file.name.endsWith('.png')) {
+    const buf = new Uint8Array(await file.arrayBuffer());
+    let bin = '';
+    buf.forEach(b => bin += String.fromCharCode(b));
+    ws.send(JSON.stringify({ type: 'world_import', payload: btoa(bin), worldName: file.name.replace(/\.png$/i, '') }));
+  } else {
+    ws.send(JSON.stringify({ type: 'world_import', payload: text, worldName: file.name.replace(/\.json$/i, '') }));
+  }
+  e.target.value = '';
+});
+
+/* ---------------- 会话按钮 ---------------- */
+$('chat-new').onclick = () => {
+  ws.send(JSON.stringify({ type: 'chat_new' }));
+  addSys('⏳ 新建会话…');
+};
+$('chat-export').onclick = () => {
+  if (!currentChatId) return;
+  ws.send(JSON.stringify({ type: 'chat_export', chatId: currentChatId }));
+};
+$('chat-del').onclick = () => {
+  if (!currentChatId) return;
+  void uiConfirm('🗑 删除会话', '删除当前会话？聊天记录将丢失（世界卡片不受影响）。', true).then((ok) => {
+    if (ok) ws.send(JSON.stringify({ type: 'chat_delete', chatId: currentChatId }));
+  });
+};
+
+/* ---------------- 拆卡动画 ---------------- */
+const CARD_ICONS = { character: '🧙', scene: '🏰', memory: '📜', item: '🗡️', system: '🌍' };
+const CARD_LABELS = { character: '角色', scene: '场景', memory: '记忆', item: '物品', system: '世界' };
+
+function playSplitAnimation(summary) {
+  const stage = $('split-stage');
+  const resultBox = $('split-result');
+  const cardsBox = $('split-cards');
+  // 清场
+  stage.innerHTML = '';
+  cardsBox.innerHTML = '';
+
+  const counts = summary.counts || {};
+  // 拆出的卡型清单（含名称）
+  const items = [];
+  if (summary.characters && summary.characters.length) items.push({ kind: 'character', label: summary.characters.join('、') });
+  if (summary.scenes && summary.scenes.length) items.push({ kind: 'scene', label: summary.scenes.join('、') });
+  if (counts.memory > 0) items.push({ kind: 'memory', label: `${counts.memory} 条记忆` });
+  if (summary.items && summary.items.length) items.push({ kind: 'item', label: summary.items.join('、') });
+  if (counts.system > 0) items.push({ kind: 'system', label: '世界观' });
+
+  // 源卡
+  const src = document.createElement('div');
+  src.className = 'split-source';
+  src.textContent = `📄 ${summary.world || '导入包'}`;
+  stage.style.height = '56px';
+  stage.appendChild(src);
+
+  // 动画后渲染子卡
+  const showResults = () => {
+    resultBox.style.display = 'block';
+    items.forEach((it, i) => {
+      const chip = document.createElement('span');
+      chip.className = 'mini-card';
+      chip.style.animationDelay = (i * 0.12) + 's';
+      chip.innerHTML = `<span class="ic">${CARD_ICONS[it.kind] || '📄'}</span>${it.label}`;
+      chip.title = CARD_LABELS[it.kind] || it.kind;
+      cardsBox.appendChild(chip);
+    });
+    setTimeout(() => { stage.innerHTML = ''; stage.style.height = '0'; }, 700);
+  };
+  setTimeout(showResults, 650);
+}
+
+
+/* ---------------- 模型接入面板 ---------------- */
+const cfgMsg = $('cfg-msg');
+function cfgLog(msg, color) {
+  cfgMsg.textContent = msg;
+  cfgMsg.style.color = color || 'var(--dim)';
+}
+
+/* ---------------- 设置弹层（模型接入等） ---------------- */
+function openSettings() {
+  $('settings-overlay').style.display = 'flex';
+  $('settings-modal').style.display = 'block';
+}
+function closeSettings() {
+  $('settings-overlay').style.display = 'none';
+  $('settings-modal').style.display = 'none';
+}
+$('btn-settings').onclick = openSettings;
+$('settings-close').onclick = closeSettings;
+function updateLayerDemo() {
+  const ce = Number($('set-compress-every') && $('set-compress-every').value) || 0;
+  const lb = Number($('set-layer-buffer') && $('set-layer-buffer').value) || 0;
+  const demo = $('set-layer-demo');
+  if (!demo) return;
+  if (ce <= 0) {
+    demo.textContent = '关闭：所有层都保持全文（不压缩）。';
+    return;
+  }
+  const trigger = ce + lb;
+  demo.textContent = `机制：完成第 ${trigger} 层时压 ${1}-${ce} 层为摘要，${ce + 1}-${trigger} 层保持全文；之后每 ${ce} 层再压一次最旧段（如第 ${trigger + ce} 层时压 ${ce + 1}-${trigger}）。`;
+}
+$('set-compress-every').addEventListener('input', updateLayerDemo);
+$('set-layer-buffer').addEventListener('input', updateLayerDemo);
+$('set-summary-save').onclick = () => {
+  const ce = Number($('set-compress-every').value);
+  const lb = Number($('set-layer-buffer').value);
+  if (!Number.isFinite(ce) || !Number.isFinite(lb)) { $('set-summary-msg').textContent = '请输入数字'; return; }
+  const compress = Math.max(0, Math.round(ce));
+  const buffer = compress === 0 ? 0 : Math.max(0, Math.round(lb));
+  ws.send(JSON.stringify({ type: 'settings_set', layerCompressEvery: compress, layerBuffer: buffer }));
+  $('set-summary-msg').textContent = '已保存 ✓';
+  toast(compress > 0 ? `记忆分层：每 ${compress} 层压一段，缓冲 ${buffer} 层全文` : '记忆分层：关闭', 'ok');
+  setTimeout(() => { $('set-summary-msg').textContent = ''; }, 2500);
+};
+updateLayerDemo();
+$('settings-overlay').onclick = closeSettings;
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSettings(); });
+
+function loadProviders() {
+  ws.send(JSON.stringify({ type: 'provider_list' }));
+}
+
+$('cfg-provider').addEventListener('change', () => {
+  $('cfg-model').innerHTML = '<option>— 先填 Key 拉取 —</option>';
+});
+
+$('cfg-load').onclick = () => {
+  const provider = $('cfg-provider').value;
+  const key = $('cfg-key').value.trim();
+  if (!key) { cfgLog('请先粘贴 API Key', 'var(--red)'); return; }
+  cfgLog(`拉取 ${provider} 上游模型…`);
+  ws.send(JSON.stringify({ type: 'provider_models', provider }));
+};
+
+$('cfg-test').onclick = () => {
+  const provider = $('cfg-provider').value;
+  const key = $('cfg-key').value.trim();
+  if (!key) { cfgLog('请先粘贴 API Key', 'var(--red)'); return; }
+  cfgLog('连通性测试中…');
+  ws.send(JSON.stringify({ type: 'provider_test', provider, apiKey: key }));
+};
+
+$('cfg-apply').onclick = () => {
+  const stage = $('cfg-stage').value;
+  const provider = $('cfg-provider').value;
+  const model = $('cfg-model').value;
+  const key = $('cfg-key').value.trim();
+  if (!model || model.startsWith('—')) { cfgLog('请先拉取并选择模型', 'var(--red)'); return; }
+  cfgLog(`应用 ${provider}/${model} 到 ${stage}…`);
+  ws.send(JSON.stringify({ type: 'provider_set', stage, provider, model, apiKey: key }));
+};
+
+// hello 后自动加载 provider 列表（见 onmessage hello 分支）
+
+$('send').onclick = send;
+
+/* ---------------- slash 命令提示（/ 触发）+ /help ---------------- */
+const SLASH_CMDS = [
+  { cmd: '/ooc 文本', desc: '场外发言（存历史，不进回合结算）' },
+  { cmd: '/me 动作', desc: '玩家动作（走正常回合）' },
+  { cmd: '/roll 2d6', desc: '掷骰子，结果入历史' },
+  { cmd: '/r 1d20+1', desc: '掷骰简写' },
+  { cmd: '/help', desc: '查看全部命令' },
+];
+const inputEl = $('input');
+const slashPop = $('slash-pop');
+let slashSel = -1;
+function renderSlashPop() {
+  const v = inputEl.value;
+  slashPop.innerHTML = '';
+  if (!v.startsWith('/') || busy) { slashPop.classList.remove('show'); slashSel = -1; return; }
+  const show = v === '/' ? SLASH_CMDS : SLASH_CMDS.filter((c) => c.cmd.startsWith(v) || c.cmd.startsWith(v.toLowerCase()));
+  if (v !== '/' && show.length === 0) { slashPop.classList.remove('show'); slashSel = -1; return; }
+  const items = v === '/' ? SLASH_CMDS : show;
+  slashPop.classList.add('show');
+  slashSel = Math.min(slashSel, items.length - 1);
+  if (slashSel < 0) slashSel = 0;
+  items.forEach((c, i) => {
+    const row = document.createElement('div');
+    row.className = 'si' + (i === slashSel ? ' sel' : '');
+    const b = document.createElement('b');
+    b.textContent = c.cmd;
+    const sp = document.createElement('span');
+    sp.textContent = c.desc;
+    row.appendChild(b); row.appendChild(sp);
+    row.onclick = () => { inputEl.value = c.cmd + ' '; slashPop.classList.remove('show'); inputEl.focus(); };
+    slashPop.appendChild(row);
+  });
+}
+$('input').addEventListener('keydown', (e) => {
+  const popOpen = slashPop.classList.contains('show');
+  if (popOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+    e.preventDefault();
+    const items = slashPop.querySelectorAll('.si');
+    const n = items.length;
+    slashSel = e.key === 'ArrowDown' ? (slashSel + 1) % n : (slashSel - 1 + n) % n;
+    items.forEach((el, i) => el.classList.toggle('sel', i === slashSel));
+    return;
+  }
+  if (e.key === 'Enter') {
+    if (popOpen && slashSel >= 0) {
+      const items = slashPop.querySelectorAll('.si');
+      const picked = items[slashSel] ? items[slashSel].querySelector('b').textContent : '';
+      if (picked === '/help') { openHelp(); return; }
+      inputEl.value = picked + ' ';
+      slashPop.classList.remove('show');
+      e.preventDefault();
+      return;
+    }
+    send();
+  }
+  if (e.key === 'Escape' && popOpen) { slashPop.classList.remove('show'); return; }
+  renderSlashPop();
+});
+function openHelp() {
+  const rows = SLASH_CMDS.map((c) => `<div style="font-size:12.5px;color:var(--text);"><b style="color:var(--gold);font-family:ui-monospace,monospace;">${c.cmd}</b><span style="color:var(--dim);margin-left:8px;">${c.desc}</span></div>`).join('');
+  openModal('💡 斜杠命令', [{ tag: 'hint', value: '输入 / 可弹出命令补全；回车发送命令。' }, { tag: 'hint', value: rows }], [
+    { label: '关闭', onClick: () => closeModal() },
+  ]);
+}
+renderSlashPop();
+
+/* ---------------- 玩家身份（Persona） ---------------- */
+const personaAvatarInput = document.createElement('input');
+personaAvatarInput.type = 'file';
+personaAvatarInput.accept = 'image/*';
+personaAvatarInput.style.display = 'none';
+document.body.appendChild(personaAvatarInput);
+let pendingPersona = null; // { name, description } 等待头像
+
+$('persona-chip').onclick = () => {
+  const cur = $('persona-name').textContent === '旅行者' ? '' : $('persona-name').textContent;
+  let avatarBuf = (myPersona && myPersona.avatar) || '';
+  openModal('🧙 你的身份（你是谁）', [
+    { tag: 'input', label: '名字（替换开场白里的 {{user}}）', key: 'name', value: cur },
+    { tag: 'input', label: '一句话身份描述（可选）', key: 'desc', value: (myPersona && myPersona.description) || '', placeholder: '如：灰烬镇来的赏金猎人' },
+    { tag: 'hint', key: 'avaHint', value: avatarBuf ? '已选头像 ✓' : '（可选）点头像按钮上传' },
+  ], [
+    { label: '取消', onClick: () => closeModal() },
+    { label: avatarBuf ? '🖼 换头像' : '🖼 头像', onClick: (v) => { currentPersonaModal = v; personaAvatarInput.click(); } },
+    { label: '保存', cls: 'primary', onClick: (v) => {
+      const trimmed = String(v.name || '').trim();
+      if (!trimmed) { toast('需要至少一个名字', 'err'); return; }
+      const desc = String(v.desc || '').trim();
+      const payload = { name: trimmed };
+      if (desc) payload.description = desc;
+      // 头像：优先新选的；没有新选但原本有则保留
+      if (personaAvatarData) payload.avatar = personaAvatarData;
+      else if (avatarBuf) payload.avatar = avatarBuf;
+      personaAvatarData = '';
+      closeModal();
+      ws.send(JSON.stringify({ type: 'persona_set', ...payload }));
+      toast('身份已保存 ✓');
+    } },
+  ]);
+};
+let currentPersonaModal = null;
+let personaAvatarData = '';
+personaAvatarInput.onchange = () => {
+  const file = personaAvatarInput.files && personaAvatarInput.files[0];
+  personaAvatarInput.value = '';
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = String(reader.result);
+    if (currentPersonaModal) {
+      // 已开的 modal：记录头像并更新提示
+      const hint = $('ui-modal-body').querySelector('[data-k="avaHint"]');
+      if (hint) hint.textContent = '已选头像 ✓';
+      // 保存到全局，供保存动作使用
+      personaAvatarData = dataUrl;
+    } else {
+      // 直接设置（旧路径兜底）
+      ws.send(JSON.stringify({ type: 'persona_set', name: '旅行者', avatar: dataUrl }));
+    }
+    currentPersonaModal = null;
+  };
+  reader.readAsDataURL(file);
+};
+
+connect();
+</script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+{
+  "name": "pitavern",
+  "version": "0.2.0",
+  "private": true,
+  "description": "PiTavern — 基于 @earendil-works/pi-ai 的四阶段快慢双轨 RPG 交互引擎（PreRouter → ContextAssembler → Actor → PostEvaluator）",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "demo": "tsx src/demo.ts",
+    "web": "tsx src/web/server.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "seed": "tsx src/db/seed.ts",
+    "pick-model": "tsx src/config/pick-model.ts",
+    "connect": "tsx src/config/connect.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.84.4",
+    "dotenv": "^16.4.5",
+    "ioredis": "^5.4.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  }
+}
